@@ -133,12 +133,53 @@ class LeadTimeConfig(_Frozen):
 ForecastModelName = Literal["seasonal_naive", "ets", "sarima"]
 
 
+class ETSConfig(_Frozen):
+    """Holt-Winters exponential smoothing specification (statsmodels)."""
+
+    trend: Literal["add", "mul"] | None = "add"
+    damped_trend: bool = True
+    seasonal: Literal["add", "mul"] | None = "add"
+
+
+class SARIMAConfig(_Frozen):
+    """SARIMA(p,d,q)(P,D,Q)_m; the seasonal period m comes from ``seasonal_period``."""
+
+    order: tuple[int, int, int] = (1, 0, 0)
+    seasonal_order: tuple[int, int, int] = (0, 1, 1)
+    trend: Literal["n", "c", "t", "ct"] = "c"
+
+
 class ForecastConfig(_Frozen):
     models: list[ForecastModelName] = Field(min_length=1)
+    ets: ETSConfig = ETSConfig()
+    sarima: SARIMAConfig = SARIMAConfig()
     seasonal_period: int = Field(ge=1)
     horizon: int = Field(ge=1, description="Months to forecast forward.")
     backtest_months: int = Field(ge=1, description="Rolling-origin evaluation window.")
-    selection_metric: Literal["wape", "mape", "bias"] = "wape"
+    selection_metric: Literal["wape", "mape"] = "wape"
+    selection_strategy: Literal["per_series", "global"] = Field(
+        default="per_series",
+        description=(
+            "per_series: each region-product gets its own best model. global: one model "
+            "(lowest pooled error across all series) is used everywhere."
+        ),
+    )
+    selection_holdout_months: int = Field(
+        ge=1,
+        description=(
+            "For the unbiased accuracy estimate: choose models on the earlier backtest "
+            "months and score on the last N, which the choice never saw."
+        ),
+    )
+    n_jobs: int | None = Field(
+        default=None, ge=1, description="Parallel worker processes; null = all CPU cores."
+    )
+
+    @model_validator(mode="after")
+    def _holdout_fits(self) -> Self:
+        if self.selection_holdout_months >= self.backtest_months:
+            raise ValueError("selection_holdout_months must be < backtest_months")
+        return self
 
     @model_validator(mode="after")
     def _baseline_present(self) -> Self:

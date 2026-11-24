@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from pharmanet import __version__
 from pharmanet.config import load_config
 from pharmanet.data.generate import summarize
-from pharmanet.pipeline import run_generate
+from pharmanet.pipeline import run_forecast, run_generate
 
 app = typer.Typer(
     name="pharmanet",
@@ -71,6 +71,20 @@ def generate(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = N
     typer.echo(f"Wrote {len(ds.tables())} tables to {data_dir}")
     for key, value in summarize(ds).items():
         typer.echo(f"  {key:<32} {value}")
+
+
+@app.command()
+def forecast(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None) -> None:
+    """Backtest models, select per series, forecast, and compute safety stock."""
+    cfg = load_config(config)
+    try:
+        result, out_dir = run_forecast(cfg, run_id)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote forecast outputs to {out_dir}")
+    for key, value in result.summary.items():
+        typer.echo(f"  {key:<38} {value}")
 
 
 if __name__ == "__main__":

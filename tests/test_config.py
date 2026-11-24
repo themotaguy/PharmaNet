@@ -66,6 +66,7 @@ def _mutate(d: dict[str, Any], path: str, value: Any) -> dict[str, Any]:
         ("optimization.solver.name", "cplex"),
         ("optimization.max_open_dcs", 99),
         ("network.n_months", 24),
+        ("forecasting.selection_holdout_months", 12),
         ("forecasting.models", ["ets", "sarima"]),
     ],
 )

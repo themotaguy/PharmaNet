@@ -41,3 +41,27 @@ def test_run_generate_writes_config_snapshot(
     assert (data_dir / "demand.parquet").exists()
     # The snapshot must reload to an identical config: results are traceable.
     assert load_config(Path("outputs/t1/config.yaml")) == cfg
+
+
+def test_forecast_stage_end_to_end(small_config_path: Path) -> None:
+    from pharmanet.pipeline import forecast_and_safety_stock
+
+    cfg = load_config(small_config_path)
+    out = forecast_and_safety_stock(cfg, generate(cfg))
+    n_series = 3 * 2
+    assert len(out.selection) == n_series
+    assert len(out.forecasts) == n_series * cfg.forecasting.horizon
+    assert len(out.errors) == n_series * len(cfg.forecasting.models) * 12
+    assert (out.safety_stock["safety_stock"] >= 0).all()
+    assert (out.safety_stock["design_demand"] >= out.safety_stock["annual_forecast"]).all()
+    assert "holdout_improvement_vs_naive_pct" in out.summary
+
+
+def test_run_forecast_requires_data(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pharmanet.pipeline import run_forecast
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError, match="pharmanet generate"):
+        run_forecast(load_config(small_config_path), run_id="missing")

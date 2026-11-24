@@ -40,3 +40,13 @@ def test_generate_command(
     assert result.exit_code == 0, result.output
     assert (tmp_path / "outputs/cli/data/products.parquet").exists()
     assert "annual_demand_units" in result.output
+
+
+def test_forecast_command(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["generate", "-c", str(small_config_path), "--run-id", "f"])
+    result = runner.invoke(app, ["forecast", "-c", str(small_config_path), "--run-id", "f"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "outputs/f/forecast/safety_stock.parquet").exists()
