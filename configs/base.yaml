@@ -1,0 +1,76 @@
+# PharmaNet base configuration. Default-size synthetic instance.
+# All values are synthetic; units noted inline.
+
+run:
+  name: base
+  seed: 42
+  output_dir: outputs
+
+network:
+  n_plants: 4
+  n_dcs: 8
+  n_regions: 20
+  n_products: 12
+  n_months: 36          # months of demand history
+  grid_size: 1000.0     # locations sampled in [0, 1000]^2 (distance units)
+
+generation:
+  products:
+    cold_fraction: 0.30
+    intermittent_fraction: 0.10
+    unit_value: {low: 20.0, high: 500.0}        # $/unit
+    shelf_life_months: {low: 12, high: 36}
+  plants:
+    qualification_prob: 0.6
+    capacity_slack: {low: 1.2, high: 1.8}       # x total annual demand per product
+  dcs:
+    fixed_cost: {low: 400000.0, high: 900000.0} # $/year
+    throughput_slack: {low: 1.5, high: 3.0}     # x (total demand / n_dcs)
+    no_cold_fraction: 0.25
+    cold_share: {low: 0.3, high: 0.6}
+  demand:
+    base_level: {low: 50.0, high: 800.0}        # units/month per product-region
+    annual_trend: {low: -0.03, high: 0.08}
+    seasonal_amplitude: {low: 0.05, high: 0.30}
+    noise_cv: {low: 0.05, high: 0.20}
+    intermittent_zero_prob: 0.5
+
+costs:
+  transport_per_unit_distance: 0.002   # $/unit/distance-unit
+  cold_chain_premium: 1.5              # cold transport costs 1.5x
+  unmet_penalty_multiplier: 10.0
+
+lead_times:
+  plant_dc_base_days: 3.0
+  dc_region_base_days: 1.0
+  days_per_unit_distance: 0.01
+  cv: 0.25
+
+forecasting:
+  models: [seasonal_naive, ets, sarima]
+  seasonal_period: 12
+  horizon: 12
+  backtest_months: 12
+  selection_metric: wape
+
+inventory:
+  service_level: 0.95
+
+optimization:
+  solver:
+    name: highs
+    time_limit_s: 300
+    mip_gap: 0.001
+  single_sourcing: false
+  max_open_dcs: null
+
+simulation:
+  n_scenarios: 500
+  disruptions:
+    plant_outage: true
+    dc_outage: true
+    cold_lane_failure: true
+  sensitivity:
+    fixed_cost_multipliers: [0.8, 0.9, 1.0, 1.1, 1.2]
+    transport_cost_multipliers: [0.8, 0.9, 1.0, 1.1, 1.2]
+    demand_multipliers: [0.8, 0.9, 1.0, 1.1, 1.2]
