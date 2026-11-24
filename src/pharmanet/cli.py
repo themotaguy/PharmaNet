@@ -16,6 +16,8 @@ from pydantic import ValidationError
 
 from pharmanet import __version__
 from pharmanet.config import load_config
+from pharmanet.data.generate import summarize
+from pharmanet.pipeline import run_generate
 
 app = typer.Typer(
     name="pharmanet",
@@ -54,6 +56,21 @@ def check_config(config: ConfigOpt = Path("configs/base.yaml")) -> None:
         f"{n.n_plants} plants, {n.n_dcs} DCs, {n.n_regions} regions, "
         f"{n.n_products} products, {n.n_months} months | solver={cfg.optimization.solver.name}"
     )
+
+
+RunIdOpt = Annotated[
+    str | None, typer.Option("--run-id", help="Output folder name (default: run.name).")
+]
+
+
+@app.command()
+def generate(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None) -> None:
+    """Generate the synthetic dataset and write it to outputs/<run_id>/data/."""
+    cfg = load_config(config)
+    ds, data_dir = run_generate(cfg, run_id)
+    typer.echo(f"Wrote {len(ds.tables())} tables to {data_dir}")
+    for key, value in summarize(ds).items():
+        typer.echo(f"  {key:<32} {value}")
 
 
 if __name__ == "__main__":

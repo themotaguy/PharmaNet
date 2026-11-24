@@ -28,3 +28,10 @@ def base_config_dict(base_config_path: Path) -> dict[str, Any]:
     with base_config_path.open() as fh:
         data: dict[str, Any] = yaml.safe_load(fh)
     return data
+
+
+@pytest.fixture
+def small_config_dict(small_config_path: Path) -> dict[str, Any]:
+    with small_config_path.open() as fh:
+        data: dict[str, Any] = yaml.safe_load(fh)
+    return data

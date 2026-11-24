@@ -19,7 +19,7 @@ demand regions, with cold-chain products) and:
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Setup: skeleton, tooling, CI, config | ✅ |
-| 2 | Synthetic data generator | ⏳ |
+| 2 | Synthetic data generator | ✅ |
 | 3 | Forecasting + safety stock | ⏳ |
 | 4 | Optimization (MILP, baseline, validation) | ⏳ |
 | 5 | Simulation + sensitivity | ⏳ |
@@ -32,7 +32,17 @@ demand regions, with cold-chain products) and:
 ```bash
 uv sync                                  # create .venv and install deps (Python 3.11)
 uv run pharmanet check-config -c configs/base.yaml
+uv run pharmanet generate -c configs/base.yaml   # synthetic data -> outputs/base/data/
 uv run pytest                            # tests
 uv run ruff check . && uv run mypy       # lint + type check
 uv run pre-commit install                # optional: run checks on every commit
 ```
+
+Data tables and the demand model are documented in [docs/methodology.md](docs/methodology.md#data-dictionary).
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'pharmanet'` on macOS.** Recent Python releases skip
+`.pth` files that carry the macOS `hidden` file flag, which breaks the editable install. Fix:
+`chflags -R nohidden .venv`. If it keeps coming back, the project is probably in an
+iCloud-synced folder (e.g. `~/Documents`); moving it elsewhere (e.g. `~/Projects`) avoids it.

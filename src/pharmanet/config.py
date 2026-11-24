@@ -97,6 +97,9 @@ class DemandGen(_Frozen):
 
 
 class GenerationConfig(_Frozen):
+    start_month: str = Field(
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="First month of history, 'YYYY-MM'."
+    )
     products: ProductGen
     plants: PlantGen
     dcs: DCGen

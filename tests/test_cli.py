@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from pharmanet import __version__
@@ -29,3 +30,13 @@ def test_check_config_invalid(tmp_path: Path, small_config_path: Path) -> None:
     bad.write_text(small_config_path.read_text().replace("service_level: 0.95", "service_level: 2"))
     result = runner.invoke(app, ["check-config", "-c", str(bad)])
     assert result.exit_code == 1
+
+
+def test_generate_command(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["generate", "-c", str(small_config_path), "--run-id", "cli"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "outputs/cli/data/products.parquet").exists()
+    assert "annual_demand_units" in result.output
