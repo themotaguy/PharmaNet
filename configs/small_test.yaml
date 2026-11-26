@@ -96,3 +96,6 @@ simulation:
 
 graph:
   backup_capacity_share: 1.0       # dual-qualification mitigation: backup plant capacity / product demand
+
+report:
+  benchmark_seeds: 2               # MILP vs greedy on seeds 1..N in run-all (0 = skip)

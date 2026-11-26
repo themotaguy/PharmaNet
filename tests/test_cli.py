@@ -91,3 +91,11 @@ def test_graph_command(
         assert result.exit_code == 0, result.output
     assert (tmp_path / "outputs/g/graph/flow_graph.graphml").exists()
     assert "cross-check" in result.output
+
+
+def test_report_command_requires_outputs(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["report", "-c", str(small_config_path), "--run-id", "none"])
+    assert result.exit_code == 1

@@ -10,13 +10,20 @@ Run directory layout::
         optimize/*.parquet  # Phase 4: MILP + baseline designs and flows, summary.json
         simulate/*.parquet  # Phase 5: Monte Carlo, disruptions, sensitivity, summary.json
         graph/              # Phase 6: node risk, SPOFs, cross-check, mitigations, GraphML
+        benchmark/          # MILP vs greedy across generated networks
+        manifest.json       # Phase 7: provenance (config hash, git commit, timings)
+        results.md          # Phase 7: generated report
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import subprocess
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +31,7 @@ import networkx as nx
 import pandas as pd
 import yaml
 
+from pharmanet import __version__
 from pharmanet.config import PharmaNetConfig
 from pharmanet.data.generate import Dataset, annual_demand, generate
 from pharmanet.data.io import load_dataset, save_dataset
@@ -58,6 +66,7 @@ from pharmanet.optimization.solution import (
     solution_frames,
 )
 from pharmanet.optimization.validate import validate_solution
+from pharmanet.report import write_report
 from pharmanet.simulation.evaluate import (
     evaluate_design,
     evaluate_scenarios,
@@ -507,3 +516,79 @@ def run_graph(cfg: PharmaNetConfig, run_id: str | None = None) -> tuple[GraphOut
     result.mitigations.to_parquet(gdir / "mitigations.parquet", index=False)
     (gdir / "summary.json").write_text(json.dumps(result.summary, indent=2, default=str))
     return result, gdir
+
+
+# -------------------------------------------------------------- Phase 7: end to end
+def run_benchmark(
+    cfg: PharmaNetConfig, n_seeds: int, run_id: str | None = None
+) -> tuple[pd.DataFrame, Path]:
+    df = benchmark_across_seeds(cfg, list(range(1, n_seeds + 1)))
+    out = run_dir(cfg, run_id) / "benchmark"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "milp_vs_greedy.parquet"
+    df.to_parquet(path, index=False)
+    return df, path
+
+
+def _git_commit() -> str | None:
+    """Short commit hash (+ "-dirty" if the tree has local changes), or None outside git."""
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return f"{sha}-dirty" if dirty else sha
+
+
+def config_fingerprint(cfg: PharmaNetConfig) -> str:
+    """sha256 of the validated config: same hash => same inputs."""
+    canonical = json.dumps(cfg.model_dump(mode="json"), sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def run_all(
+    cfg: PharmaNetConfig,
+    run_id: str | None = None,
+    config_file: str | None = None,
+    publish_to: Path | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    """Every stage in order, then the manifest and ``results.md``.
+
+    Stages communicate only through files in the run directory, so any stage
+    can also be re-run on its own with the same result.
+    """
+    started = datetime.now(UTC)
+    timings: dict[str, float] = {}
+    stages: list[tuple[str, Any]] = [
+        ("generate", lambda: run_generate(cfg, run_id)),
+        ("forecast", lambda: run_forecast(cfg, run_id)),
+        ("optimize", lambda: run_optimize(cfg, run_id)),
+        ("simulate", lambda: run_simulate(cfg, run_id)),
+        ("graph", lambda: run_graph(cfg, run_id)),
+    ]
+    if cfg.report.benchmark_seeds > 0:
+        stages.append(("benchmark", lambda: run_benchmark(cfg, cfg.report.benchmark_seeds, run_id)))
+    for name, fn in stages:
+        t0 = time.perf_counter()
+        fn()
+        timings[name] = time.perf_counter() - t0
+
+    out = run_dir(cfg, run_id)
+    manifest = {
+        "run_id": out.name,
+        "config_file": config_file,
+        "config_sha256": config_fingerprint(cfg),
+        "seed": cfg.run.seed,
+        "package_version": __version__,
+        "git_commit": _git_commit(),
+        "started_at": started.isoformat(timespec="seconds"),
+        "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "stage_seconds": timings,
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    write_report(out, publish_to)
+    return out, manifest

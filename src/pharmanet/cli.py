@@ -18,7 +18,8 @@ from pharmanet import __version__
 from pharmanet.config import load_config
 from pharmanet.data.generate import summarize
 from pharmanet.pipeline import (
-    benchmark_across_seeds,
+    run_all,
+    run_benchmark,
     run_dir,
     run_forecast,
     run_generate,
@@ -26,6 +27,7 @@ from pharmanet.pipeline import (
     run_optimize,
     run_simulate,
 )
+from pharmanet.report import write_report
 
 app = typer.Typer(
     name="pharmanet",
@@ -184,22 +186,59 @@ def graph(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None
 @app.command()
 def benchmark(
     config: ConfigOpt = Path("configs/base.yaml"),
-    n_seeds: Annotated[int, typer.Option("--n-seeds", min=1)] = 10,
+    n_seeds: Annotated[int | None, typer.Option("--n-seeds", min=1)] = None,
     run_id: RunIdOpt = None,
 ) -> None:
-    """MILP vs greedy across many generated networks (seeds 1..N)."""
+    """MILP vs greedy across many generated networks (seeds 1..N; default from config)."""
     cfg = load_config(config)
-    df = benchmark_across_seeds(cfg, list(range(1, n_seeds + 1)))
-    out = run_dir(cfg, run_id) / "benchmark"
-    out.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out / "milp_vs_greedy.parquet", index=False)
+    n = n_seeds or cfg.report.benchmark_seeds or 10
+    df, path = run_benchmark(cfg, n, run_id)
     typer.echo(df.round(3).to_string(index=False))
     s = df["savings_vs_greedy_pct"]
     typer.echo(
         f"\nSavings vs greedy over {len(df)} instances: mean {s.mean():.2f}%, "
         f"median {s.median():.2f}%, range {s.min():.2f}%-{s.max():.2f}%"
     )
-    typer.echo(f"Wrote {out / 'milp_vs_greedy.parquet'}")
+    typer.echo(f"Wrote {path}")
+
+
+PublishOpt = Annotated[
+    bool,
+    typer.Option("--publish/--no-publish", help="Also copy results.md to docs/results.md."),
+]
+DOCS_RESULTS = Path("docs/results.md")
+
+
+@app.command("run-all")
+def run_all_cmd(
+    config: ConfigOpt = Path("configs/base.yaml"),
+    run_id: RunIdOpt = None,
+    publish: PublishOpt = False,
+) -> None:
+    """Run every stage end to end, then write manifest.json and results.md."""
+    cfg = load_config(config)
+    out, manifest = run_all(cfg, run_id, str(config), DOCS_RESULTS if publish else None)
+    for stage, secs in manifest["stage_seconds"].items():
+        typer.echo(f"  {stage:<10} {secs:6.1f} s")
+    typer.echo(
+        f"Report: {out / 'results.md'}" + (f" (published to {DOCS_RESULTS})" if publish else "")
+    )
+
+
+@app.command()
+def report(
+    config: ConfigOpt = Path("configs/base.yaml"),
+    run_id: RunIdOpt = None,
+    publish: PublishOpt = False,
+) -> None:
+    """Regenerate results.md from an existing run's outputs (no re-computation)."""
+    cfg = load_config(config)
+    try:
+        path = write_report(run_dir(cfg, run_id), DOCS_RESULTS if publish else None)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote {path}" + (f" and {DOCS_RESULTS}" if publish else ""))
 
 
 if __name__ == "__main__":

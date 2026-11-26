@@ -62,6 +62,11 @@ ignore = [
     "N803", "N806",  # allow math-style names like X, P, D in optimization code
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# The report renders human-readable Markdown: en dashes, minus and multiplication
+# signs are intentional typography there, not typos for ASCII characters.
+"src/pharmanet/report.py" = ["RUF001"]
+
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
 python_version = "3.11"

@@ -274,6 +274,15 @@ class GraphConfig(_Frozen):
     )
 
 
+# ------------------------------------------------------------------------- report
+class ReportConfig(_Frozen):
+    benchmark_seeds: int = Field(
+        default=10,
+        ge=0,
+        description="Generated networks for the MILP-vs-greedy benchmark in run-all (0 = skip).",
+    )
+
+
 # ------------------------------------------------------------------------- root
 class PharmaNetConfig(_Frozen):
     run: RunConfig
@@ -286,6 +295,7 @@ class PharmaNetConfig(_Frozen):
     optimization: OptimizationConfig
     simulation: SimulationConfig
     graph: GraphConfig = GraphConfig()
+    report: ReportConfig = ReportConfig()
 
     @model_validator(mode="after")
     def _cross_section_checks(self) -> Self:
