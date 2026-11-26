@@ -43,6 +43,9 @@ class NetworkInstance:
     cap_d: dict[str, float]  # DC throughput capacity
     cold_d: dict[str, float]  # DC cold capacity
     penalty: dict[str, float]  # pen_k
+    # Lanes that cannot carry a product (disruption scenarios): flow fixed to 0.
+    blocked_in: frozenset[PDK] = frozenset()
+    blocked_out: frozenset[DRK] = frozenset()
 
     def total_demand(self) -> float:
         return sum(self.dem.values())
@@ -56,6 +59,37 @@ class NetworkInstance:
 
     def scale_demand(self, factor: float) -> NetworkInstance:
         return self.with_demand({key: v * factor for key, v in self.dem.items()})
+
+    # --- scenario modifiers (each returns a new instance; the original is untouched)
+    def scale_fixed_costs(self, factor: float) -> NetworkInstance:
+        return replace(self, fixed_cost={d: v * factor for d, v in self.fixed_cost.items()})
+
+    def scale_transport(self, factor: float) -> NetworkInstance:
+        """Scale all lane costs. Penalties are unchanged; callers should keep
+        ``factor`` modest so the penalty still exceeds any path cost."""
+        return replace(
+            self,
+            c_in={key: v * factor for key, v in self.c_in.items()},
+            c_out={key: v * factor for key, v in self.c_out.items()},
+        )
+
+    def plant_outage(self, plant: str, capacity_loss: float = 1.0) -> NetworkInstance:
+        """Plant loses ``capacity_loss`` share of its annual capacity for every product."""
+        keep = 1.0 - capacity_loss
+        return replace(
+            self,
+            cap_pk={(p, k): v * keep if p == plant else v for (p, k), v in self.cap_pk.items()},
+        )
+
+    def dc_outage(self, dc: str) -> NetworkInstance:
+        """DC cannot handle any flow (its fixed cost, if opened, is still incurred)."""
+        return replace(self, cap_d={**self.cap_d, dc: 0.0}, cold_d={**self.cold_d, dc: 0.0})
+
+    def block_inbound(self, lanes: frozenset[PDK]) -> NetworkInstance:
+        return replace(self, blocked_in=self.blocked_in | lanes)
+
+    def block_outbound(self, lanes: frozenset[DRK]) -> NetworkInstance:
+        return replace(self, blocked_out=self.blocked_out | lanes)
 
 
 def build_instance(ds: Dataset, design_demand: pd.DataFrame) -> NetworkInstance:

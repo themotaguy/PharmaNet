@@ -113,6 +113,14 @@ def validate_solution(
         if not _le(dc_cold[d], inst.cold_d[d]):
             errors.append(f"DC cold capacity {d}: {dc_cold[d]:.4f} > {inst.cold_d[d]:.4f}")
 
+    # Disrupted (blocked) lanes must carry nothing
+    for key in inst.blocked_in:
+        if sol.x.get(key, 0.0) > ABS_TOL:
+            errors.append(f"blocked inbound lane {key} carries {sol.x[key]:.4f}")
+    for key in inst.blocked_out:
+        if sol.z.get(key, 0.0) > ABS_TOL:
+            errors.append(f"blocked outbound lane {key} carries {sol.z[key]:.4f}")
+
     # Optional structural rules
     if single_sourcing:
         for r, served in regions_served_by.items():

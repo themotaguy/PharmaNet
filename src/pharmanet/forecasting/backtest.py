@@ -11,21 +11,17 @@ replenishment lead times in this network are days, i.e. shorter than a month.
 
 from __future__ import annotations
 
-import os
-from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ProcessPoolExecutor
-from typing import Any, TypeVar
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from pharmanet.config import ForecastConfig, ForecastModelName
 from pharmanet.forecasting.models import MODELS, forecast
+from pharmanet.parallel import parallel_map
 
 SERIES_KEY = ["region_id", "product_id"]
-
-T = TypeVar("T")
-R = TypeVar("R")
 
 
 # ------------------------------------------------------------------------ metrics
@@ -73,22 +69,6 @@ def rmse(actual: np.ndarray, fc: np.ndarray) -> float:
 def improvement_pct(baseline: float, new: float) -> float:
     """Percent reduction of an error metric vs a baseline (NaN if the baseline is 0)."""
     return float("nan") if baseline == 0 else 100 * (baseline - new) / baseline
-
-
-# ------------------------------------------------------------------- parallelism
-def parallel_map(fn: Callable[[T], R], items: Sequence[T], n_jobs: int | None) -> list[R]:
-    """Map over items in worker processes (or serially if n_jobs == 1).
-
-    Each series is independent, so the backtest is embarrassingly parallel.
-    Results come back in input order, so output is deterministic regardless of
-    scheduling.
-    """
-    workers = n_jobs or os.cpu_count() or 1
-    if workers == 1 or len(items) <= 1:
-        return [fn(x) for x in items]
-    chunk = max(1, len(items) // (workers * 4))
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(fn, items, chunksize=chunk))
 
 
 def iter_series(demand: pd.DataFrame) -> Iterable[tuple[str, str, np.ndarray]]:

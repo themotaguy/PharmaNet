@@ -235,6 +235,22 @@ class SensitivityConfig(_Frozen):
 
 class SimulationConfig(_Frozen):
     n_scenarios: int = Field(ge=1)
+    demand_common_shock_share: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description=(
+            "Share of each product's demand-shock variance common to all regions "
+            "(0 = independent regions, 1 = all regions move together)."
+        ),
+    )
+    outage_capacity_loss: float = Field(
+        default=1.0,
+        gt=0,
+        le=1,
+        description="Share of a plant's annual capacity lost in a plant-outage scenario.",
+    )
+    n_jobs: int | None = Field(default=None, ge=1, description="Parallel processes; null = all.")
     disruptions: DisruptionConfig
     sensitivity: SensitivityConfig
 

@@ -23,6 +23,7 @@ from pharmanet.pipeline import (
     run_forecast,
     run_generate,
     run_optimize,
+    run_simulate,
 )
 
 app = typer.Typer(
@@ -120,6 +121,38 @@ def optimize(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = N
     typer.echo("  safety_stock_refinement:")
     for row in refinement:
         typer.echo(f"    {row}")
+
+
+@app.command()
+def simulate(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None) -> None:
+    """Stress-test the chosen design: Monte Carlo demand, disruptions, sensitivity."""
+    cfg = load_config(config)
+    try:
+        result, out_dir = run_simulate(cfg, run_id)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote simulation outputs to {out_dir}")
+    s = dict(result.summary)
+    worst = s["disruptions"].pop("worst")
+    _echo_nested(s)
+    typer.echo("  worst disruptions (by unmet demand):")
+    for w in worst:
+        typer.echo(
+            f"    {w['scenario_id']:<22} unmet={w['unmet']:>10,.0f}  "
+            f"service={w['service_level']:.2%}  cost/unit delivered "
+            f"{w['cost_per_unit_change_pct']:+.2f}%"
+        )
+    typer.echo("  sensitivity:")
+    cols = [
+        "parameter",
+        "multiplier",
+        "redesign_open_dcs",
+        "design_changed",
+        "regret_pct",
+        "base_design_service_level",
+    ]
+    typer.echo(result.sensitivity[cols].round(3).to_string(index=False))
 
 
 @app.command()

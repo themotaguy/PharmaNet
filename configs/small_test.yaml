@@ -80,6 +80,9 @@ optimization:
   ss_refinement_iterations: 1      # re-solve after recomputing SS with actual lead times
 
 simulation:
+  demand_common_shock_share: 0.5   # product-level shock shared by all regions (0 = independent)
+  outage_capacity_loss: 1.0        # plant outage removes this share of annual capacity
+  n_jobs: 1                     # parallel processes (null = all cores)
   n_scenarios: 20
   disruptions:
     plant_outage: true

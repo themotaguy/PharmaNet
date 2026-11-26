@@ -193,8 +193,72 @@ Penalty-free logistics cost per delivered unit is reported too, so a saving cann
 
 On the seed-42 base instance, greedy happens to choose the optimal DCs, so the saving is only 3.2% (all routing). That is the low end of the distribution, which is why the multi-instance figure is the one to quote.
 
-## Simulation
-_Phase 5._
+## Simulation and scenario analysis
+
+Code: `src/pharmanet/simulation/` (`scenarios.py`, `evaluate.py`). Run with `pharmanet simulate`
+(needs `generate`, `forecast`, `optimize` first); outputs go to `outputs/<run_id>/simulate/`.
+
+**Principle: fix the strategic decision, re-optimize the operational one.** DCs cannot be opened
+overnight, but product can be re-routed. Every scenario fixes $y$ to the base design and re-solves
+only the flows. With all binaries fixed the MILP is an LP (≈0.1 s per scenario). Scenarios run in
+parallel, and every scenario solution goes through the same independent validator.
+
+Scenarios are evaluated at **forecast** demand (or draws around it), not design demand. Safety
+stock is the buffer the design reserved capacity for; it is not demand.
+
+### Monte Carlo demand
+For each (region, product), annual demand is drawn around the forecast $F$:
+
+$$
+D = F\, e^{sZ - s^2/2},\quad s^2 = \ln(1+cv^2),\quad cv = \frac{\sigma_{monthly}\sqrt{12}}{F},\quad
+Z_{rk} = \sqrt{\rho}\,G_k + \sqrt{1-\rho}\,E_{rk}
+$$
+
+- Lognormal with mean $F$: positive and unbiased.
+- $\sigma_{monthly}$ is Phase 3's one-step RMSE. The $\sqrt{12}$ treats monthly errors as independent. This is **optimistic**: persistent errors would widen the spread.
+- $G_k$ is a product-level shock shared by all regions, with $\rho$ = `demand_common_shock_share` (0.5). Independent regions would diversify away aggregate risk and understate it.
+
+### Disruptions (one at a time, at forecast demand)
+- **Plant outage:** the plant loses `outage_capacity_loss` (default 100%) of its annual capacity. A single-period model cannot represent "down for March", so the default is a whole-year worst case.
+- **DC outage:** each *open* DC handles nothing. Its fixed cost is still paid, and no new DC can be opened.
+- **Cold-lane failure:** each lane carrying cold product in the base design loses cold transport.
+
+Impact is reported as **unmet units and service level**. Cost change is reported as logistics cost
+per *delivered* unit. Total cost would be dominated by the artificial unmet-demand penalty, and total
+logistics cost *falls* when less is shipped, so neither is a fair headline.
+
+### Sensitivity analysis
+One-at-a-time multipliers on fixed costs, transport costs and demand (0.8–1.2). For each, we
+**re-optimize the design** (full MILP) and also **price the base design** under the new parameters.
+Regret = cost(base design) − cost(re-optimized design) ≥ 0.
+
+### Results (base instance, synthetic, seed 42)
+
+| Monte Carlo (500 scenarios) | |
+|---|---|
+| Cost p5 / p50 / p95 | $4.07M / $4.13M / $4.21M (±1.8% around $4.13M at forecast) |
+| Mean service level / worst scenario | 100.0% / 99.2% |
+| P(any shortfall) | 0.2% |
+
+| Worst single failures | Unmet units | Service level | Why |
+|---|---|---|---|
+| DC02 down | 362k | 71.5% | the remaining open DCs lack capacity (only 8.2% headroom) |
+| PL03 down | 324k | 74.4% | SKU01 and SKU06 are made *only* at PL03; SKU02/SKU07 lack backup capacity |
+| PL02 down | 272k | 78.5% | all of it cold product |
+| Cold-lane failures | 29 of 30 rerouted | ≥ 99.98% | cold capacity at other open DCs absorbs them |
+
+Every single plant or DC outage causes a shortfall (8 of 8). Cost per delivered unit rises 9–14%.
+
+| Sensitivity | Result |
+|---|---|
+| Fixed or transport cost ±20% | design unchanged, zero regret |
+| Demand −20% | best design closes DC01; keeping it costs 12.7% more |
+| Demand +10% / +20% | best design swaps in the large DC05; the base design serves only 96% / 88% |
+
+**Takeaway.** The cost-optimal design is robust to cost assumptions and ordinary forecast error,
+but fragile to capacity shocks. Cost minimization opened just enough capacity (8% headroom), so
+any single-node failure or +10% demand causes shortages. That is the trade-off between efficiency
+and resilience. Phase 6 measures it with graph analysis and evaluates mitigations.
 
 ## Graph risk analysis
 _Phase 6._

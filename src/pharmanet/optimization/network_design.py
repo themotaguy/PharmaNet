@@ -137,6 +137,11 @@ def build_model(inst: NetworkInstance, opts: ModelOptions) -> pyo.ConcreteModel:
     if opts.fixed_open is not None:
         for d, v in opts.fixed_open.items():
             m.y[d].fix(int(v))
+    # Disrupted lanes carry nothing (Phase 5 scenarios).
+    for p, d, k in inst.blocked_in:
+        m.x[p, d, k].fix(0.0)
+    for d, r, k in inst.blocked_out:
+        m.z[d, r, k].fix(0.0)
     return m
 
 

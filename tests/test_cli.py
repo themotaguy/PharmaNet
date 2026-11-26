@@ -70,3 +70,13 @@ def test_optimize_requires_forecast(
     runner.invoke(app, ["generate", "-c", str(small_config_path), "--run-id", "o2"])
     result = runner.invoke(app, ["optimize", "-c", str(small_config_path), "--run-id", "o2"])
     assert result.exit_code == 1
+
+
+def test_simulate_command(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for cmd in ("generate", "forecast", "optimize", "simulate"):
+        result = runner.invoke(app, [cmd, "-c", str(small_config_path), "--run-id", "s"])
+        assert result.exit_code == 0, result.output
+    assert (tmp_path / "outputs/s/simulate/monte_carlo.parquet").exists()

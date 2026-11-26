@@ -14,13 +14,13 @@ from pharmanet.forecasting.backtest import (
     bias,
     holdout_selection_summary,
     mape,
-    parallel_map,
     rmse,
     rolling_origin,
     select_models,
     wape,
 )
 from pharmanet.forecasting.models import forecast, seasonal_naive
+from pharmanet.parallel import parallel_map
 
 
 @pytest.fixture

@@ -65,3 +65,21 @@ def test_run_forecast_requires_data(
     monkeypatch.chdir(tmp_path)
     with pytest.raises(FileNotFoundError, match="pharmanet generate"):
         run_forecast(load_config(small_config_path), run_id="missing")
+
+
+def test_simulate_stage_end_to_end(small_config_path: Path) -> None:
+    from pharmanet.pipeline import forecast_and_safety_stock, optimize_network, simulate_design
+
+    cfg = load_config(small_config_path)
+    ds = generate(cfg)
+    fc = forecast_and_safety_stock(cfg, ds)
+    opt = optimize_network(cfg, ds, fc.forecasts, fc.selection, fc.safety_stock)
+    dd = opt.design_demand.merge(
+        fc.safety_stock[["region_id", "product_id", "sigma_monthly"]],
+        on=["region_id", "product_id"],
+    )
+    out = simulate_design(cfg, ds, dd, opt.milp.open_dcs)
+    assert len(out.monte_carlo) == cfg.simulation.n_scenarios
+    assert out.monte_carlo["service_level"].between(0, 1).all()
+    assert len(out.sensitivity) == 9
+    assert out.summary["disruptions"]["n_scenarios"] == len(out.disruptions)

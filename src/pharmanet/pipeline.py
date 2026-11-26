@@ -8,6 +8,7 @@ Run directory layout::
         data/*.parquet   # Phase 2: synthetic inputs
         forecast/*.parquet  # Phase 3: backtest, selection, forecasts, safety stock
         optimize/*.parquet  # Phase 4: MILP + baseline designs and flows, summary.json
+        simulate/*.parquet  # Phase 5: Monte Carlo, disruptions, sensitivity, summary.json
 """
 
 from __future__ import annotations
@@ -46,6 +47,18 @@ from pharmanet.optimization.solution import (
     solution_frames,
 )
 from pharmanet.optimization.validate import validate_solution
+from pharmanet.simulation.evaluate import (
+    evaluate_design,
+    evaluate_scenarios,
+    run_sensitivity,
+    summarize_disruptions,
+    summarize_monte_carlo,
+)
+from pharmanet.simulation.scenarios import (
+    demand_scenarios,
+    disruption_scenarios,
+    simulation_rng,
+)
 
 
 def run_dir(cfg: PharmaNetConfig, run_id: str | None = None) -> Path:
@@ -281,3 +294,96 @@ def benchmark_across_seeds(cfg: PharmaNetConfig, seeds: list[int]) -> pd.DataFra
             }
         )
     return pd.DataFrame(rows)
+
+
+# ------------------------------------------------------------------ Phase 5: simulate
+@dataclass(frozen=True)
+class SimulateOutputs:
+    monte_carlo: pd.DataFrame
+    disruptions: pd.DataFrame
+    disruption_unmet: pd.DataFrame
+    sensitivity: pd.DataFrame
+    summary: dict[str, Any]
+
+
+def simulate_design(
+    cfg: PharmaNetConfig,
+    ds: Dataset,
+    design_demand: pd.DataFrame,
+    open_dcs: frozenset[str],
+) -> SimulateOutputs:
+    """Phase 5 as a pure function: stress-test a fixed design.
+
+    ``design_demand`` needs region_id, product_id, annual_forecast, sigma_monthly,
+    design_demand. Scenarios use *forecast* demand (or draws around it): safety
+    stock is the buffer the design reserved capacity for, not demand itself.
+    Sensitivity re-designs on design demand, matching how the design was made.
+    """
+    sim, opt = cfg.simulation, cfg.optimization
+    at_forecast = build_instance(
+        ds, design_demand.assign(design_demand=design_demand["annual_forecast"])
+    )
+    base_sol = evaluate_design(at_forecast, open_dcs, opt)
+    base_costs = cost_breakdown(at_forecast, base_sol)
+    base_cost = base_costs["total"]
+    delivered = at_forecast.total_demand() - sum(base_sol.u.values())
+    base_cost_per_unit = (base_cost - base_costs["penalty"]) / delivered
+
+    mc_scen = demand_scenarios(at_forecast, design_demand, sim, simulation_rng(cfg.run.seed))
+    mc, _ = evaluate_scenarios(mc_scen, open_dcs, opt, sim.n_jobs)
+
+    dis_scen = disruption_scenarios(at_forecast, base_sol, sim)
+    dis, dis_unmet = evaluate_scenarios(dis_scen, open_dcs, opt, sim.n_jobs)
+
+    sens = run_sensitivity(build_instance(ds, design_demand), open_dcs, opt, sim)
+
+    ranked = summarize_disruptions(dis, base_cost_per_unit)
+    summary: dict[str, Any] = {
+        "design_open_dcs": sorted(open_dcs),
+        "base_at_forecast": {
+            "total_cost": base_cost,
+            "service_level": service_level(at_forecast, base_sol),
+            "open_capacity_headroom_pct": 100
+            * (sum(at_forecast.cap_d[d] for d in open_dcs) / at_forecast.total_demand() - 1),
+        },
+        "monte_carlo": summarize_monte_carlo(mc, base_cost),
+        "disruptions": {
+            "n_scenarios": len(dis),
+            "worst": ranked[:5],
+            "n_causing_shortfall": int((dis["unmet"] > 1e-6).sum()),
+        },
+        "sensitivity": {
+            "n_runs": len(sens),
+            "design_changed_in": sens.loc[
+                sens["design_changed"], ["parameter", "multiplier"]
+            ].to_dict(orient="records"),
+            "max_regret_pct": float(sens["regret_pct"].max()),
+            "min_base_design_service_level": float(sens["base_design_service_level"].min()),
+        },
+    }
+    return SimulateOutputs(mc, dis, dis_unmet, sens, summary)
+
+
+def run_simulate(cfg: PharmaNetConfig, run_id: str | None = None) -> tuple[SimulateOutputs, Path]:
+    """Load data, forecast, and design outputs; run Phase 5; write ``<run>/simulate/``."""
+    out = run_dir(cfg, run_id)
+    odir = out / "optimize"
+    if not (odir / "milp_open_dcs.parquet").exists():
+        raise FileNotFoundError(f"{odir} has no design; run `pharmanet optimize` first")
+    sigma = pd.read_parquet(out / "forecast" / "safety_stock.parquet")[
+        ["region_id", "product_id", "sigma_monthly"]
+    ]
+    dd = pd.read_parquet(odir / "design_demand.parquet").merge(
+        sigma, on=["region_id", "product_id"], validate="one_to_one"
+    )
+    open_dcs = frozenset(pd.read_parquet(odir / "milp_open_dcs.parquet")["dc_id"])
+    result = simulate_design(cfg, load_dataset(out / "data"), dd, open_dcs)
+
+    sdir = out / "simulate"
+    sdir.mkdir(parents=True, exist_ok=True)
+    result.monte_carlo.to_parquet(sdir / "monte_carlo.parquet", index=False)
+    result.disruptions.to_parquet(sdir / "disruptions.parquet", index=False)
+    result.disruption_unmet.to_parquet(sdir / "disruption_unmet.parquet", index=False)
+    result.sensitivity.to_parquet(sdir / "sensitivity.parquet", index=False)
+    (sdir / "summary.json").write_text(json.dumps(result.summary, indent=2, default=str))
+    return result, sdir

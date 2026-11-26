@@ -13,8 +13,9 @@ import numpy as np
 import pandas as pd
 
 from pharmanet.config import ForecastConfig, ForecastModelName
-from pharmanet.forecasting.backtest import SERIES_KEY, iter_series, parallel_map
+from pharmanet.forecasting.backtest import SERIES_KEY, iter_series
 from pharmanet.forecasting.models import forecast
+from pharmanet.parallel import parallel_map
 
 
 def _forecast_one(
