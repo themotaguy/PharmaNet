@@ -325,7 +325,7 @@ not from structure. Closing it would need backup capacity, a third lever not mod
 Code: `src/pharmanet/optimization/stochastic.py`. Math: [formulation.md](formulation.md#two-stage-stochastic-network-design-phase-8). Run with `pharmanet stochastic`.
 
 - **Scenarios.** 30 demand draws (Phase 5 sampler, own random stream) share probability 0.9. Every single plant and candidate-DC outage (12) shares 0.1 (`stochastic.disruption_weight`). Scenario demand is the forecast with **no safety stock**, because the model hedges explicitly.
-- **Solve.** Extensive form: 106,856 variables (8 binary), 97,440 constraints, proven optimal by HiGHS in ~145 s.
+- **Solve.** Extensive form: 106,856 variables (8 binary), 97,440 constraints, proven optimal by HiGHS in 100–150 s (varies with machine load).
 - **Evaluation.** In-sample RP/EEV/VSS and WS/EVPI, then both designs priced on **212 fresh scenarios** from a different random stream.
 
 **Results (base instance, synthetic)**

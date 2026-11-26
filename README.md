@@ -51,7 +51,7 @@ Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync                                              # create the environment
-uv run pharmanet run-all -c configs/base.yaml        # everything, ~6 min -> outputs/base/results.md
+uv run pharmanet run-all -c configs/base.yaml        # everything, ~4–6 min -> outputs/base/results.md
 uv run pharmanet run-all -c configs/base.yaml --publish   # also update docs/results.md
 ```
 

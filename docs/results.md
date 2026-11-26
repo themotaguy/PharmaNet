@@ -6,11 +6,11 @@
 
 | Field | Value |
 |---|---|
-| Config | `configs/base.yaml` (sha256 `76521ae513e9`) |
+| Config | `configs/base.yaml` (sha256 `4f331d76837a`) |
 | Seed | 42 |
-| Code | pharmanet 0.1.0, git `5e82ef2` |
-| Finished | 2026-11-26T03:06:24+00:00 |
-| Stage timings (s) | generate 0.1, forecast 73.8, optimize 2.8, simulate 36.8, graph 18.5, benchmark 14.5 |
+| Code | pharmanet 0.1.0, git `923e6f5` |
+| Finished | 2026-11-26T03:51:22+00:00 |
+| Stage timings (s) | generate 0.0, forecast 41.9, optimize 2.1, simulate 22.2, graph 11.8, neo4j 0.1, stochastic 135.4, benchmark 10.5 |
 
 ## Instance
 
@@ -37,7 +37,7 @@ Recomputed with the chosen network's lead times: 29k → 31k units; design chang
 | Measure | Value |
 |---|---|
 | Size | 2,552 vars (8 binary), 2,320 constraints |
-| Solve | optimal, 1.07 s, MIP gap 0.013% |
+| Solve | optimal, 0.78 s, MIP gap 0.013% |
 | LP bound / integrality gap | $4.01M / 4.20% (without C6: 6.01%) |
 | Open DCs | DC01, DC02, DC07, DC08 |
 | Annual cost | $4.19M = fixed $2.07M + inbound $853k + outbound $1.27M + penalty $0 |
@@ -96,6 +96,21 @@ Cross-check structural ≤ simulated ≤ exposure on 8 nodes: lower bound holds,
 
 Cost premium is network cost at design demand. Dual qualification's one-off cost (tech transfer, regulatory approval) is not modelled, so its premium is understated. "At risk" is unmet demand as a share of forecast demand, over every single plant and DC outage.
 
+
+## 7. Two-stage stochastic design
+
+| Measure | Value |
+|---|---|
+| Designs (deterministic → stochastic) | DC01, DC02, DC07, DC08 → DC02, DC05, DC07, DC08 |
+| Extensive form | 106,856 vars (8 binary), 97,440 constraints, 42 scenarios, 100 s |
+| In sample: RP / EEV / VSS | $4.95M / $4.97M / $19k (0.38%) |
+| In sample: WS / EVPI | $4.57M / $383k (7.7%) |
+| Out of sample (212 scenarios): VSS | $19k (0.39%) |
+| Mean service under outages: deterministic / stochastic | 86.9% / 90.3% |
+| Cost at design demand: deterministic / stochastic | $4.19M / $4.36M |
+
+Neo4j bundle (CSVs, `import.cypher`, `queries.cypher`, expected answers) written to `neo4j/`.
+
 ## Resume numbers
 
 Each figure is computed by the pipeline; quote it with its caveat.
@@ -108,5 +123,7 @@ Each figure is computed by the pipeline; quote it with its caveat.
    _Source:_ `simulate/summary.json`. _Caveat:_ Annual spread = monthly RMSE × √12 (assumes independent monthly errors; likely optimistic).
 4. **Demand at risk from worst single-node failure, and mitigation:** 28.5% (DC02 down) → 15.5% with n_minus_1+dual_qualification (−45.8%) for +12.5% network cost  
    _Source:_ `graph/mitigations.parquet`. _Caveat:_ Full-year single-node outages at forecast demand. Dual-qualification (tech transfer) cost is not modelled.
-5. **MILP instance size and solve time:** 2,552 variables (8 binary), 2,320 constraints; solved to proven optimality (MIP gap 0.01%) in 1.1 s with HiGHS  
+5. **Two-stage stochastic design vs deterministic:** VSS 0.39% out of sample (0.38% in sample); EVPI 7.7%; 106,856-variable extensive form over 42 scenarios  
+   _Source:_ `stochastic/summary.json`. _Caveat:_ Value comes from outage scenarios weighted by the unmet penalty; with demand uncertainty only, the deterministic design was already optimal.
+6. **MILP instance size and solve time:** 2,552 variables (8 binary), 2,320 constraints; solved to proven optimality (MIP gap 0.01%) in 0.8 s with HiGHS  
    _Source:_ `optimize/summary.json`. _Caveat:_ Integrality gap 4.2% (vs 6.0% without strong-link constraints).
