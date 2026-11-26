@@ -40,7 +40,7 @@ Full generated report: [docs/results.md](docs/results.md). Each figure there has
 | Simulation | Design fixed, flows re-solved as LP: correlated Monte Carlo demand, plant/DC/cold-lane outages, sensitivity with regret | [`simulation/`](src/pharmanet/simulation) |
 | Graph risk | Flow graph (exposure via proportional tracing) and capability graph (dominator-based single points of failure); cross-checked against simulation; mitigations priced | [`graph/`](src/pharmanet/graph) |
 | Stochastic design | Two-stage extensive form with demand + outage scenarios; RP, EEV, VSS, WS, EVPI; out-of-sample comparison | [`stochastic.py`](src/pharmanet/optimization/stochastic.py) |
-| Neo4j | CSV + `import.cypher` bundle and 5 business Cypher queries, each with an independent pandas answer | [`neo4j_export.py`](src/pharmanet/graph/neo4j_export.py) |
+| Neo4j | CSV + `import.cypher` bundle and 5 business Cypher queries, each with an independent pandas answer; verified on live Neo4j 5.26 | [`neo4j_export.py`](src/pharmanet/graph/neo4j_export.py) |
 | Viewer | Streamlit app over a run's outputs (network map, distributions, risk bounds, stochastic comparison) | [`viewer/`](src/pharmanet/viewer) |
 
 Methods, assumptions, and caveats: [docs/methodology.md](docs/methodology.md). MILP math, matching the code constraint by constraint: [docs/formulation.md](docs/formulation.md).
@@ -66,6 +66,7 @@ Individual stages (each reads the previous stage's files from `outputs/<run_id>/
 | `pharmanet graph` | graph risk, cross-check, mitigations, GraphML export | ~20 s |
 | `pharmanet stochastic` | two-stage stochastic design, VSS/EVPI, out-of-sample comparison | ~3 min |
 | `pharmanet neo4j-export` | Neo4j CSVs, `import.cypher`, `queries.cypher`, expected answers | ~1 s |
+| `pharmanet neo4j-verify` | run the queries in a live Neo4j container and diff against the pandas answers | ~5 s |
 | `pharmanet benchmark` | MILP vs greedy on N generated networks | ~15 s |
 | `pharmanet report` | regenerate `results.md` from existing outputs | <1 s |
 | `pharmanet check-config` | validate a config file | <1 s |
@@ -75,7 +76,7 @@ All commands take `-c <config>` and `--run-id <name>`. Every parameter (sizes, c
 
 ## How it's validated
 
-- **162 tests** (`uv run pytest`, ~30 s), run in CI with ruff and strict mypy on every push.
+- **165 tests** (`uv run pytest`, ~30 s), plus an opt-in live Neo4j test (`pytest -m neo4j`), run in CI with ruff and strict mypy on every push.
 - **Hand-verified regression instance** (2 plants × 3 DCs × 3 regions × 2 products): all 7 designs enumerated on paper in [formulation.md](docs/formulation.md#regression-instance-hand-verified). Tests assert the exact optimum (2,850, DCs {D1, D2}), every alternative, and hand-derived disruption costs.
 - **Property tests:** more demand never costs less; removing a DC never costs less; MILP ≤ greedy; strong-link constraints leave the optimum unchanged; sensitivity regret ≥ 0.
 - **Leakage guard:** the backtest model at origin *t* provably sees only months before *t*.
@@ -91,7 +92,6 @@ All commands take `-c <config>` and `--run-id <name>`. Every parameter (sizes, c
 - Monte Carlo treats monthly forecast errors as independent (√12 scaling), which likely understates annual spread.
 - Dual-qualification cost (tech transfer, regulatory approval) is not modelled.
 - Gurobi/CBC solver paths are untested. HiGHS is the tested default.
-- The Neo4j bundle has been tested offline (script/CSV consistency, pandas twins of every query) but not yet loaded into a live Neo4j server.
 - The stochastic design's value depends on assumed outage probabilities and the unmet-demand penalty.
 
 ## Roadmap (optional extensions)

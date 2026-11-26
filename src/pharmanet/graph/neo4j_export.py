@@ -62,7 +62,8 @@ ORDER BY product;""",
         """MATCH (:DC)-[s:SHIPS]->(:Region)
 WITH sum(s.flow) AS total
 MATCH (d:DC)-[s:SHIPS]->(:Region)
-RETURN d.id AS dc, sum(s.flow) AS flow, sum(s.flow) / total AS share
+WITH d, total, sum(s.flow) AS flow
+RETURN d.id AS dc, flow, flow / total AS share
 ORDER BY flow DESC;""",
     ),
     CypherQuery(
@@ -254,13 +255,29 @@ def default_failure_plant(tables: dict[str, pd.DataFrame]) -> str:
 
 BUNDLE_README = """# PharmaNet Neo4j bundle (synthetic data)
 
-1. Start Neo4j 5 with this folder as its import directory, e.g.
-   `docker run --rm -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/<password> \\
-      -v "$PWD":/import neo4j:5`
-2. Load: `cypher-shell -u neo4j -p <password> -f import.cypher`
-   (inside the container: `docker exec -i <id> cypher-shell -u neo4j -p <password> < import.cypher`)
-3. Query: `cypher-shell -u neo4j -p <password> -f queries.cypher`
-4. Compare with `expected_answers/*.csv`, computed independently in pandas.
+Tested with Neo4j 5.26 (Docker image `neo4j:5`). Run from this folder:
+
+1. Start Neo4j with this folder as its import directory. The folder must be
+   writable, because the image changes ownership of its import directory on start:
+
+       docker run -d --name pharmanet-neo4j -e NEO4J_AUTH=neo4j/<password> \\
+         -p 7474:7474 -p 7687:7687 -v "$PWD":/var/lib/neo4j/import neo4j:5
+
+2. Load the graph (cypher-shell ships inside the container):
+
+       docker exec pharmanet-neo4j cypher-shell -u neo4j -p <password> \\
+         -f /var/lib/neo4j/import/import.cypher
+
+3. Run the business queries:
+
+       docker exec pharmanet-neo4j cypher-shell -u neo4j -p <password> \\
+         -f /var/lib/neo4j/import/queries.cypher
+
+4. Check every query against the independent pandas answers in `expected_answers/`:
+
+       NEO4J_PASSWORD=<password> pharmanet neo4j-verify --container pharmanet-neo4j
+
+Browse the graph at http://localhost:7474.
 """
 
 
@@ -281,3 +298,60 @@ def write_neo4j_bundle(
     for name, df in answers.items():
         df.to_csv(adir / f"{name}.csv", index=False)
     return answers
+
+
+# ------------------------------------------------------------- live verification
+def parse_cypher_shell_plain(text: str) -> pd.DataFrame:
+    """Parse ``cypher-shell --format plain`` output (header + quoted CSV rows)."""
+    import io
+
+    df = pd.read_csv(io.StringIO(text), skipinitialspace=True)
+    for c in df.columns:  # booleans print as TRUE/FALSE
+        if df[c].dtype == object and set(df[c].dropna().unique()) <= {"TRUE", "FALSE"}:
+            df[c] = df[c] == "TRUE"
+    return df
+
+
+def compare_answers(
+    got: dict[str, pd.DataFrame], expected_dir: Path, rtol: float = 1e-6
+) -> list[dict[str, object]]:
+    """Row-by-row comparison of live query results with ``expected_answers/*.csv``."""
+    rows: list[dict[str, object]] = []
+    for name, df in got.items():
+        exp = pd.read_csv(expected_dir / f"{name}.csv")
+        detail = ""
+        try:
+            pd.testing.assert_frame_equal(
+                df.reset_index(drop=True), exp.reset_index(drop=True), check_dtype=False, rtol=rtol
+            )
+            match = True
+        except AssertionError as exc:
+            match, detail = False, " ".join(str(exc).split())[:300]
+        rows.append({"query": name, "match": match, "rows_live": len(df),
+                     "rows_expected": len(exp), "detail": detail})  # fmt: skip
+    return rows
+
+
+def run_queries_in_docker(container: str, password: str, plant: str) -> dict[str, pd.DataFrame]:
+    """Run every query with cypher-shell inside a running Neo4j container."""
+    import subprocess
+
+    out: dict[str, pd.DataFrame] = {}
+    for q in QUERIES:
+        res = subprocess.run(
+            ["docker", "exec", container, "cypher-shell", "-u", "neo4j", "-p", password,
+             "--format", "plain", "--param", f"plant => '{plant}'", q.cypher],
+            capture_output=True, text=True,
+        )  # fmt: skip
+        if res.returncode != 0:
+            raise RuntimeError(f"query {q.name} failed in Neo4j: {res.stderr.strip()[:500]}")
+        out[q.name] = parse_cypher_shell_plain(res.stdout)
+    return out
+
+
+def plant_from_queries_file(path: Path) -> str:
+    """The $plant value the bundle's queries.cypher was written with."""
+    for line in path.read_text().splitlines():
+        if line.startswith(":param plant"):
+            return line.split("'")[1]
+    raise ValueError(f"no ':param plant' line in {path}")

@@ -108,3 +108,57 @@ def test_plant_failure_query_matches_graph_module(sol: Solution) -> None:
     got = q5.set_index(["region", "product"])["exposed"]
     pd.testing.assert_series_equal(got.sort_index(), ref.sort_index(), check_names=False)
     assert got.sum() == pytest.approx(450.0)
+
+
+# --------------------------------------------------------------- live verification
+def test_parse_cypher_shell_plain() -> None:
+    from pharmanet.graph.neo4j_export import parse_cypher_shell_plain
+
+    text = 'product, is_cold, sole_plant\n"SKU08", TRUE, "PL02"\n"SKU01", FALSE, "PL03"\n'
+    df = parse_cypher_shell_plain(text)
+    assert list(df.columns) == ["product", "is_cold", "sole_plant"]
+    assert df["is_cold"].tolist() == [True, False] and df["product"].tolist() == ["SKU08", "SKU01"]
+
+
+def test_compare_answers_flags_mismatch(tmp_path: Path) -> None:
+    from pharmanet.graph.neo4j_export import compare_answers
+
+    pd.DataFrame({"dc": ["D1"], "flow": [10.0]}).to_csv(tmp_path / "q.csv", index=False)
+    good = compare_answers({"q": pd.DataFrame({"dc": ["D1"], "flow": [10.0]})}, tmp_path)
+    bad = compare_answers({"q": pd.DataFrame({"dc": ["D1"], "flow": [11.0]})}, tmp_path)
+    assert good[0]["match"] and not bad[0]["match"] and bad[0]["detail"]
+
+
+def test_plant_from_queries_file(tmp_path: Path) -> None:
+    from pharmanet.graph.neo4j_export import plant_from_queries_file
+
+    f = tmp_path / "queries.cypher"
+    f.write_text(queries_cypher("PL07"))
+    assert plant_from_queries_file(f) == "PL07"
+
+
+@pytest.mark.neo4j
+def test_live_neo4j_matches_pandas() -> None:
+    """Integration: the bundle loaded in a live Neo4j answers exactly like pandas.
+
+    Opt-in (skipped in CI): load a bundle into a running container per the bundle
+    README, then set PHARMANET_NEO4J_CONTAINER, NEO4J_PASSWORD and optionally
+    PHARMANET_NEO4J_BUNDLE (default outputs/base/neo4j).
+    """
+    import os
+
+    from pharmanet.graph.neo4j_export import (
+        compare_answers,
+        plant_from_queries_file,
+        run_queries_in_docker,
+    )
+
+    container = os.environ.get("PHARMANET_NEO4J_CONTAINER")
+    password = os.environ.get("NEO4J_PASSWORD")
+    if not (container and password):
+        pytest.skip("no live Neo4j container configured")
+    bundle = Path(os.environ.get("PHARMANET_NEO4J_BUNDLE", "outputs/base/neo4j"))
+    got = run_queries_in_docker(container, password, plant_from_queries_file(
+        bundle / "queries.cypher"))  # fmt: skip
+    results = compare_answers(got, bundle / "expected_answers")
+    assert all(r["match"] for r in results), results

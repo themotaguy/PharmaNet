@@ -358,7 +358,12 @@ Graph model: `(:Plant)-[:SHIPS]->(:DC)-[:SHIPS]->(:Region)` with `product_id`, `
 | `single_dc_regions` | Which regions are served by only one DC? | RG07 (DC08) |
 | `plant_failure_impact` | If plant `$plant` fails, what does each region lose? | proportional flow tracing (matches Phase 6) |
 
-Every query has a pandas twin (`answer_queries`). Tests check the twins against hand-derived answers and, for `plant_failure_impact`, against Phase 6's `exposure_detail`. Load the bundle into Neo4j 5 with `cypher-shell -f import.cypher` (see the bundle README). Against a live database, compare with `expected_answers/`. *Not yet run against a live Neo4j server here.*
+Every query has a pandas twin (`answer_queries`). Tests check the twins against hand-derived answers and, for `plant_failure_impact`, against Phase 6's `exposure_detail`. **Verified on a live Neo4j 5.26 (Docker `neo4j:5`).** Following the bundle README verbatim, `import.cypher` loads exactly the CSV row counts (4 plants, 8 DCs, 20 regions, 12 products, 292 `SHIPS`, 20 `QUALIFIED_FOR`, 240 `DEMANDS`). `pharmanet neo4j-verify` then runs all five queries in the container and matches the pandas answers row for row (72 / 4 / 4 / 1 / 69 rows). Live testing caught three issues that offline tests could not, all now fixed:
+1. `dc_exposure` mixed an aggregate with a non-grouped variable in `RETURN`, which Neo4j 5 rejects.
+2. The README gave the wrong import mount path.
+3. The README's steps didn't work as written: they needed a writable mount and `cypher-shell` via `docker exec`.
+
+The opt-in test `pytest -m neo4j` repeats the check against any running container.
 
 **Structural vs operational dependence.** Only 4 products have a single *approved* plant (query 2), but 72 of 80 cold region-product pairs are *currently* supplied by just one plant (query 1). Cost optimization concentrates each product on its cheapest source, so dependence in practice is much higher than dependence on paper. Re-routing is possible (Phase 5), but only within spare capacity.
 

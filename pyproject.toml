@@ -91,4 +91,5 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "slow: long-running tests (full-size instances, many scenarios)",
+    "neo4j: needs a running Neo4j container (set PHARMANET_NEO4J_CONTAINER and NEO4J_PASSWORD)",
 ]

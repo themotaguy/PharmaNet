@@ -204,6 +204,51 @@ def neo4j_export(
         typer.echo(df.head(5).round(3).to_string(index=False))
 
 
+@app.command("neo4j-verify")
+def neo4j_verify(
+    config: ConfigOpt = Path("configs/base.yaml"),
+    run_id: RunIdOpt = None,
+    container: Annotated[str, typer.Option(help="Running Neo4j container name.")] = (
+        "pharmanet-neo4j"
+    ),
+) -> None:
+    """Run the Cypher queries in a live Neo4j (Docker) and compare with pandas answers.
+
+    The password is read from $NEO4J_PASSWORD (never a CLI argument, so it stays
+    out of shell history).
+    """
+    import os
+
+    from pharmanet.graph.neo4j_export import (
+        compare_answers,
+        plant_from_queries_file,
+        run_queries_in_docker,
+    )
+
+    password = os.environ.get("NEO4J_PASSWORD")
+    if not password:
+        typer.echo("Set NEO4J_PASSWORD to the container's password.", err=True)
+        raise typer.Exit(code=1)
+    bundle = run_dir(load_config(config), run_id) / "neo4j"
+    plant = plant_from_queries_file(bundle / "queries.cypher")
+    try:
+        got = run_queries_in_docker(container, password, plant)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    results = compare_answers(got, bundle / "expected_answers")
+    for r in results:
+        status = "PASS" if r["match"] else "FAIL"
+        typer.echo(
+            f"  {status}  {r['query']:<28} live={r['rows_live']} expected={r['rows_expected']}"
+        )
+        if r["detail"]:
+            typer.echo(f"        {r['detail']}")
+    ok = all(r["match"] for r in results)
+    typer.echo("All queries match the pandas answers." if ok else "Mismatches found.")
+    raise typer.Exit(code=0 if ok else 1)
+
+
 @app.command()
 def stochastic(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None) -> None:
     """Two-stage stochastic design vs the deterministic one (VSS, EVPI, out-of-sample)."""
