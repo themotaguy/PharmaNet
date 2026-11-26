@@ -204,8 +204,20 @@ class SolverConfig(_Frozen):
 
 class OptimizationConfig(_Frozen):
     solver: SolverConfig
+    strong_linking: bool = Field(
+        default=True,
+        description="Add z_drk <= dem_rk * y_d (C6): same optimum, much tighter LP relaxation.",
+    )
     single_sourcing: bool = False
     max_open_dcs: int | None = Field(default=None, ge=1)
+    ss_refinement_iterations: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Re-solves after recomputing safety stock from the chosen network's actual "
+            "lead times (closes the forecast <-> design loop)."
+        ),
+    )
 
 
 # -------------------------------------------------------------------- simulation

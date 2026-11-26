@@ -19,6 +19,8 @@ assignments and reports the difference.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
@@ -128,3 +130,58 @@ def compute_safety_stock(
     )
     df["design_demand"] = df["annual_forecast"] + df["safety_stock"]
     return df.drop(columns="rmse").rename(columns={"plant_id": "lt_plant_id", "dc_id": "lt_dc_id"})
+
+
+def flow_weighted_lead_times(
+    ds: Dataset,
+    inbound: dict[tuple[str, str, str], float],
+    outbound: dict[tuple[str, str, str], float],
+    fallback: pd.DataFrame,
+) -> pd.DataFrame:
+    """Lead times implied by an actual network design (closes the Phase 3 loop).
+
+    For each (region, product), average the plant->DC->region path lead time over
+    the DCs that actually serve it, weighted by flow; each DC's inbound leg is in
+    turn weighted by which plants feed it that product. Variances are averaged
+    the same way (between-path spread is ignored, a mild simplification).
+    Pairs with no flow (fully unmet) keep their ``fallback`` (fastest-path) values.
+
+    ``inbound`` maps (plant, dc, product) -> flow and ``outbound`` maps
+    (dc, region, product) -> flow, as in an optimization ``Solution``.
+    """
+    lin = ds.lanes_inbound.set_index(["plant_id", "dc_id"])
+    lout = ds.lanes_outbound.set_index(["dc_id", "region_id"])
+    in_mean: dict[Any, float] = lin["lead_time_mean_days"].to_dict()
+    in_sd: dict[Any, float] = lin["lead_time_std_days"].to_dict()
+    out_mean: dict[Any, float] = lout["lead_time_mean_days"].to_dict()
+    out_sd: dict[Any, float] = lout["lead_time_std_days"].to_dict()
+
+    # Inbound leg per (dc, product): flow-weighted over feeding plants.
+    by_dk: dict[tuple[str, str], list[tuple[str, float]]] = {}
+    for (p, d, k), q in inbound.items():
+        by_dk.setdefault((d, k), []).append((p, q))
+    in_leg: dict[tuple[str, str], tuple[float, float, str]] = {}
+    for (d, k), feeds in by_dk.items():
+        total = sum(q for _, q in feeds)
+        mean = sum(q * in_mean[(p, d)] for p, q in feeds) / total
+        var = sum(q * in_sd[(p, d)] ** 2 for p, q in feeds) / total
+        main_plant = max(feeds, key=lambda t: t[1])[0]
+        in_leg[(d, k)] = (mean, var, main_plant)
+
+    by_rk: dict[tuple[str, str], list[tuple[str, float]]] = {}
+    for (d, r, k), q in outbound.items():
+        by_rk.setdefault((r, k), []).append((d, q))
+
+    out = fallback.set_index(["region_id", "product_id"]).copy()
+    for (r, k), serves in by_rk.items():
+        total = sum(q for _, q in serves)
+        mean = var = 0.0
+        for d, q in serves:
+            m_in, v_in, _ = in_leg[(d, k)]
+            w = q / total
+            mean += w * (m_in + out_mean[(d, r)])
+            var += w * (v_in + out_sd[(d, r)] ** 2)
+        main_dc = max(serves, key=lambda t: t[1])[0]
+        out.loc[(r, k), ["lt_mean_days", "lt_std_days"]] = [mean, np.sqrt(var)]
+        out.loc[(r, k), ["plant_id", "dc_id"]] = [in_leg[(main_dc, k)][2], main_dc]
+    return out.reset_index()

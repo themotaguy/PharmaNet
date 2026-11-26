@@ -107,3 +107,36 @@ def test_missing_supply_path_fails_loudly() -> None:
     fc, sel, lt = _toy_inputs()
     with pytest.raises(ValueError, match="No feasible supply path"):
         compute_safety_stock(fc, sel, lt.iloc[0:0], 0.95)
+
+
+def test_flow_weighted_lead_time_single_and_split(base_ds: Dataset) -> None:
+    from pharmanet.inventory.safety_stock import flow_weighted_lead_times
+
+    lin = base_ds.lanes_inbound.set_index(["plant_id", "dc_id"])
+    lout = base_ds.lanes_outbound.set_index(["dc_id", "region_id"])
+    fb = fastest_path_lead_times(base_ds)
+    k = "SKU02"
+    # One path: lead time = inbound leg + outbound leg.
+    one = flow_weighted_lead_times(
+        base_ds, {("PL01", "DC01", k): 10.0}, {("DC01", "RG01", k): 10.0}, fb
+    ).set_index(["region_id", "product_id"])
+    leg = (
+        lin.loc[("PL01", "DC01"), "lead_time_mean_days"]
+        + lout.loc[("DC01", "RG01"), "lead_time_mean_days"]
+    )
+    assert one.loc[("RG01", k), "lt_mean_days"] == pytest.approx(leg)
+    # 50/50 split over two DCs: mean is the average of the two paths.
+    split = flow_weighted_lead_times(
+        base_ds,
+        {("PL01", "DC01", k): 5.0, ("PL01", "DC02", k): 5.0},
+        {("DC01", "RG01", k): 5.0, ("DC02", "RG01", k): 5.0},
+        fb,
+    ).set_index(["region_id", "product_id"])
+    leg2 = (
+        lin.loc[("PL01", "DC02"), "lead_time_mean_days"]
+        + lout.loc[("DC02", "RG01"), "lead_time_mean_days"]
+    )
+    assert split.loc[("RG01", k), "lt_mean_days"] == pytest.approx((leg + leg2) / 2)
+    # Untouched pairs keep the fastest-path fallback.
+    other = fb.set_index(["region_id", "product_id"]).loc[("RG02", k), "lt_mean_days"]
+    assert split.loc[("RG02", k), "lt_mean_days"] == pytest.approx(other)

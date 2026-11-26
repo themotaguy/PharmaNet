@@ -167,6 +167,32 @@ simplification in single-period strategic design (revisited in Phase 4). On the 
 safety stock is 2.3% of annual volume at a 95% service level, because lead times (5–16 days) are
 short compared with the monthly forecast error.
 
+## Optimization: baseline, validation, benchmarks
+
+The MILP itself is specified in [formulation.md](formulation.md).
+
+**Greedy baseline** (`optimization/baseline.py`):
+1. Open DCs in order of increasing fixed cost until open capacity covers total demand *and* open cold capacity covers cold demand.
+2. Route (region, product) demand **cold first**, then largest first, to the nearest open DC that can hold it. Source it from the nearest qualified plant with capacity left, splitting when capacity runs out. Anything left over is unmet.
+
+*Why cold first:* an earlier version routed largest-first. Ambient volume then filled the cold-capable DCs, 42k cold units went unmet, and the MILP's "40% saving" was mostly the artificial unmet-demand penalty. That baseline was a strawman. Allocating the scarce resource first is what a planner would do, and it gives a fair comparison.
+
+**Decomposing the saving.** We also solve *greedy DCs + optimal flows* (y fixed to greedy's choice, flows re-optimized):
+routing saving = greedy − (greedy DCs + optimal flows); DC-choice saving = (greedy DCs + optimal flows) − MILP.
+Penalty-free logistics cost per delivered unit is reported too, so a saving cannot come from penalty accounting alone.
+
+**Validation** (`optimization/validate.py`) runs on every solution from every method, independent of the solver: non-negativity; demand = delivered + unmet; flow conservation per DC and product; plant capacity and qualification; no flow through closed DCs; DC throughput and cold capacity; single-sourcing and max-open rules when enabled; and the objective recomputed from flows must match the solver's. Any failure raises.
+
+**Benchmark across instances** (`pharmanet benchmark`). One instance can be lucky or unlucky for the heuristic, so we compare on 10 independently generated networks (seeds 1–10, design demand = last 12 months of history):
+
+| | Savings vs greedy |
+|---|---|
+| Mean / median | **16.6% / 16.4%** |
+| Range | 10.2% – 24.1% |
+| Main source | DC choice (greedy opens 1–2 more DCs than needed in most instances) |
+
+On the seed-42 base instance, greedy happens to choose the optimal DCs, so the saving is only 3.2% (all routing). That is the low end of the distribution, which is why the multi-instance figure is the one to quote.
+
 ## Simulation
 _Phase 5._
 

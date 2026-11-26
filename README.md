@@ -21,7 +21,7 @@ demand regions, with cold-chain products) and:
 | 1 | Setup: skeleton, tooling, CI, config | ✅ |
 | 2 | Synthetic data generator | ✅ |
 | 3 | Forecasting + safety stock | ✅ |
-| 4 | Optimization (MILP, baseline, validation) | ⏳ |
+| 4 | Optimization (MILP, baseline, validation) | ✅ |
 | 5 | Simulation + sensitivity | ⏳ |
 | 6 | Graph risk analysis | ⏳ |
 | 7 | Pipeline, CLI, results | ⏳ |
@@ -34,6 +34,8 @@ uv sync                                  # create .venv and install deps (Python
 uv run pharmanet check-config -c configs/base.yaml
 uv run pharmanet generate -c configs/base.yaml   # synthetic data -> outputs/base/data/
 uv run pharmanet forecast -c configs/base.yaml   # backtest, forecast, safety stock (~40s)
+uv run pharmanet optimize -c configs/base.yaml   # MILP network design + greedy benchmark (~5s)
+uv run pharmanet benchmark -c configs/base.yaml  # MILP vs greedy on 10 generated networks
 uv run pytest                            # tests
 uv run ruff check . && uv run mypy       # lint + type check
 uv run pre-commit install                # optional: run checks on every commit

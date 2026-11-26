@@ -74,8 +74,10 @@ optimization:
     name: highs
     time_limit_s: 30
     mip_gap: 0.0
-  single_sourcing: false
+  strong_linking: true             # (C6) tightens the LP relaxation; optimum unchanged
+  single_sourcing: false           # true = each region served by exactly one DC
   max_open_dcs: null
+  ss_refinement_iterations: 1      # re-solve after recomputing SS with actual lead times
 
 simulation:
   n_scenarios: 20

@@ -50,3 +50,23 @@ def test_forecast_command(
     result = runner.invoke(app, ["forecast", "-c", str(small_config_path), "--run-id", "f"])
     assert result.exit_code == 0, result.output
     assert (tmp_path / "outputs/f/forecast/safety_stock.parquet").exists()
+
+
+def test_optimize_command(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for cmd in ("generate", "forecast", "optimize"):
+        result = runner.invoke(app, [cmd, "-c", str(small_config_path), "--run-id", "o"])
+        assert result.exit_code == 0, result.output
+    assert (tmp_path / "outputs/o/optimize/summary.json").exists()
+    assert "savings_vs_greedy_pct" in result.output
+
+
+def test_optimize_requires_forecast(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["generate", "-c", str(small_config_path), "--run-id", "o2"])
+    result = runner.invoke(app, ["optimize", "-c", str(small_config_path), "--run-id", "o2"])
+    assert result.exit_code == 1
