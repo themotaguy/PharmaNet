@@ -23,6 +23,7 @@ config and a git commit.
 | **Demand uncertainty** | 500 Monte Carlo scenarios: mean service 100%, worst 99.2%; cost p5–p95 $4.07M–$4.21M |
 | **Resilience** | Worst single-node failure puts **28.5%** of demand at risk. N-1 DC capacity plus dual-qualifying single-source products cuts it to **15.5%** (−46%) for +12.5% network cost |
 | **Scale** | 2,552 variables (8 binary), 2,320 constraints; proven optimal in ~1 s with HiGHS |
+| **Stochastic design** | Two-stage model (107k variables, 42 scenarios) buys a larger DC: 0.39% lower expected cost out of sample and +3.4 pts mean service under outages, for +4.1% normal-year cost. With demand uncertainty alone it matches the deterministic design |
 
 Full generated report: [docs/results.md](docs/results.md). Each figure there has its source file and caveat.
 
@@ -38,6 +39,9 @@ Full generated report: [docs/results.md](docs/results.md). Each figure there has
 | Validation | Independent check of every solution (flow balance, capacities, qualification, closed DCs, recomputed objective) | [`validate.py`](src/pharmanet/optimization/validate.py) |
 | Simulation | Design fixed, flows re-solved as LP: correlated Monte Carlo demand, plant/DC/cold-lane outages, sensitivity with regret | [`simulation/`](src/pharmanet/simulation) |
 | Graph risk | Flow graph (exposure via proportional tracing) and capability graph (dominator-based single points of failure); cross-checked against simulation; mitigations priced | [`graph/`](src/pharmanet/graph) |
+| Stochastic design | Two-stage extensive form with demand + outage scenarios; RP, EEV, VSS, WS, EVPI; out-of-sample comparison | [`stochastic.py`](src/pharmanet/optimization/stochastic.py) |
+| Neo4j | CSV + `import.cypher` bundle and 5 business Cypher queries, each with an independent pandas answer | [`neo4j_export.py`](src/pharmanet/graph/neo4j_export.py) |
+| Viewer | Streamlit app over a run's outputs (network map, distributions, risk bounds, stochastic comparison) | [`viewer/`](src/pharmanet/viewer) |
 
 Methods, assumptions, and caveats: [docs/methodology.md](docs/methodology.md). MILP math, matching the code constraint by constraint: [docs/formulation.md](docs/formulation.md).
 
@@ -47,7 +51,7 @@ Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync                                              # create the environment
-uv run pharmanet run-all -c configs/base.yaml        # everything, ~3 min -> outputs/base/results.md
+uv run pharmanet run-all -c configs/base.yaml        # everything, ~6 min -> outputs/base/results.md
 uv run pharmanet run-all -c configs/base.yaml --publish   # also update docs/results.md
 ```
 
@@ -60,15 +64,18 @@ Individual stages (each reads the previous stage's files from `outputs/<run_id>/
 | `pharmanet optimize` | MILP, safety-stock refinement, greedy benchmark | ~3 s |
 | `pharmanet simulate` | 500 Monte Carlo + 38 disruptions + 15 sensitivity re-designs | ~40 s |
 | `pharmanet graph` | graph risk, cross-check, mitigations, GraphML export | ~20 s |
+| `pharmanet stochastic` | two-stage stochastic design, VSS/EVPI, out-of-sample comparison | ~3 min |
+| `pharmanet neo4j-export` | Neo4j CSVs, `import.cypher`, `queries.cypher`, expected answers | ~1 s |
 | `pharmanet benchmark` | MILP vs greedy on N generated networks | ~15 s |
 | `pharmanet report` | regenerate `results.md` from existing outputs | <1 s |
 | `pharmanet check-config` | validate a config file | <1 s |
+| `pharmanet view` | open the Streamlit results viewer (`uv sync --extra viewer`) | — |
 
 All commands take `-c <config>` and `--run-id <name>`. Every parameter (sizes, costs, seeds, solver, service level, scenario counts) lives in [`configs/`](configs); nothing is hardcoded. Changing the solver to Gurobi is one line (`optimization.solver.name`); that path is wired up but untested here.
 
 ## How it's validated
 
-- **145 tests** (`uv run pytest`, ~30 s), run in CI with ruff and strict mypy on every push.
+- **162 tests** (`uv run pytest`, ~30 s), run in CI with ruff and strict mypy on every push.
 - **Hand-verified regression instance** (2 plants × 3 DCs × 3 regions × 2 products): all 7 designs enumerated on paper in [formulation.md](docs/formulation.md#regression-instance-hand-verified). Tests assert the exact optimum (2,850, DCs {D1, D2}), every alternative, and hand-derived disruption costs.
 - **Property tests:** more demand never costs less; removing a DC never costs less; MILP ≤ greedy; strong-link constraints leave the optimum unchanged; sensitivity regret ≥ 0.
 - **Leakage guard:** the backtest model at origin *t* provably sees only months before *t*.
@@ -84,19 +91,21 @@ All commands take `-c <config>` and `--run-id <name>`. Every parameter (sizes, c
 - Monte Carlo treats monthly forecast errors as independent (√12 scaling), which likely understates annual spread.
 - Dual-qualification cost (tech transfer, regulatory approval) is not modelled.
 - Gurobi/CBC solver paths are untested. HiGHS is the tested default.
+- The Neo4j bundle has been tested offline (script/CSV consistency, pandas twins of every query) but not yet loaded into a live Neo4j server.
+- The stochastic design's value depends on assumed outage probabilities and the unmet-demand penalty.
 
 ## Roadmap (optional extensions)
 
-Databricks / Delta Lake medallion layer calling the same package; Neo4j export with Cypher queries
-(GraphML is already written); Streamlit results viewer; two-stage stochastic design compared with
-the deterministic one.
+Databricks / Delta Lake medallion layer calling the same package; Benders decomposition for
+larger stochastic instances; Croston-type methods for intermittent demand.
 
 ## Project layout
 
 ```
 configs/            base.yaml (default instance), small_test.yaml (fast tests)
 docs/               formulation.md, methodology.md, results.md (generated)
-src/pharmanet/      config, data, forecasting, inventory, optimization, simulation, graph,
+src/pharmanet/      config, data, forecasting, inventory, optimization (incl. stochastic),
+                    simulation, graph (incl. neo4j_export), viewer (Streamlit),
                     pipeline.py (stages), report.py (results.md), cli.py (thin CLI)
 tests/              unit, regression, property, and end-to-end tests
 ```

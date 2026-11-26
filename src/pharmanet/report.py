@@ -41,6 +41,9 @@ def load_results(run_path: Path) -> dict[str, Any]:
     out["mitigations"] = pd.read_parquet(run_path / "graph" / "mitigations.parquet")
     out["cross_check"] = pd.read_parquet(run_path / "graph" / "cross_check.parquet")
     out["sensitivity"] = pd.read_parquet(run_path / "simulate" / "sensitivity.parquet")
+    stoch = run_path / "stochastic" / "summary.json"
+    out["stochastic"] = json.loads(stoch.read_text()) if stoch.exists() else None
+    out["neo4j"] = (run_path / "neo4j" / "import.cypher").exists()
     return out
 
 
@@ -135,6 +138,22 @@ def resume_numbers(res: dict[str, Any]) -> list[dict[str, str]]:
             "(tech transfer) cost is not modelled.",
         }
     )
+    sp = res.get("stochastic")
+    if sp:
+        oos, ins = sp["out_of_sample"], sp["in_sample"]
+        evpi = f"; EVPI {_pct(ins['EVPI_pct_of_RP'])}" if "EVPI_pct_of_RP" in ins else ""
+        nums.append(
+            {
+                "claim": "Two-stage stochastic design vs deterministic",
+                "value": f"VSS {_pct(oos['VSS_pct'], 2)} out of sample "
+                f"({_pct(ins['VSS_pct_of_EEV'], 2)} in sample){evpi}; "
+                f"{sp['model']['n_variables']:,}-variable extensive form over "
+                f"{sp['model']['n_scenarios']} scenarios",
+                "source": "stochastic/summary.json",
+                "caveat": "Value comes from outage scenarios weighted by the unmet penalty; with "
+                "demand uncertainty only, the deterministic design was already optimal.",
+            }
+        )
     m = o["model"]
     nums.append(
         {
@@ -397,6 +416,62 @@ def render_markdown(res: dict[str, Any]) -> str:
         "(tech transfer, regulatory approval) is not modelled, so its premium is understated. "
         '"At risk" is unmet demand as a share of forecast demand, over every single plant '
         "and DC outage.",
+        "",
+    ]
+    sp = res.get("stochastic")
+    if sp:
+        ins, oos, sm = sp["in_sample"], sp["out_of_sample"], sp["model"]
+        rows = [
+            [
+                "Designs (deterministic → stochastic)",
+                ", ".join(sp["deterministic_open_dcs"])
+                + " → "
+                + ", ".join(sp["stochastic_open_dcs"]),
+            ],
+            [
+                "Extensive form",
+                f"{sm['n_variables']:,} vars ({sm['n_binary']} binary), "
+                f"{sm['n_constraints']:,} constraints, {sm['n_scenarios']} scenarios, "
+                f"{sm['solve_time_s']:.0f} s",
+            ],
+            [
+                "In sample: RP / EEV / VSS",
+                f"{_money(ins['RP'])} / {_money(ins['EEV'])} / "
+                f"{_money(ins['VSS'])} ({_pct(ins['VSS_pct_of_EEV'], 2)})",
+            ],
+        ]
+        if "WS" in ins:
+            rows.append(
+                [
+                    "In sample: WS / EVPI",
+                    f"{_money(ins['WS'])} / {_money(ins['EVPI'])} ({_pct(ins['EVPI_pct_of_RP'])})",
+                ]
+            )
+        d, st_ = oos["deterministic"], oos["stochastic"]
+        rows += [
+            [
+                f"Out of sample ({oos['n_scenarios']} scenarios): VSS",
+                f"{_money(oos['VSS'])} ({_pct(oos['VSS_pct'], 2)})",
+            ],
+            [
+                "Mean service under outages: deterministic / stochastic",
+                f"{_pct(100 * d.get('mean_outage_service', float('nan')))} / "
+                f"{_pct(100 * st_.get('mean_outage_service', float('nan')))}",
+            ],
+            [
+                "Cost at design demand: deterministic / stochastic",
+                f"{_money(sp['cost_at_design_demand']['deterministic'])} / "
+                f"{_money(sp['cost_at_design_demand']['stochastic'])}",
+            ],
+        ]
+        parts += ["", "## 7. Two-stage stochastic design", "", _table(["Measure", "Value"], rows)]
+    if res.get("neo4j"):
+        parts += [
+            "",
+            "Neo4j bundle (CSVs, `import.cypher`, `queries.cypher`, expected answers) "
+            "written to `neo4j/`.",
+        ]
+    parts += [
         "",
         "## Resume numbers",
         "",

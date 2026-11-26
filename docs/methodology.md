@@ -319,3 +319,57 @@ DC failures but not single-source plants, and dual qualification fixes single-so
 DC capacity. The remaining risk (PL01 → 15.5%) comes from *plant capacity* on multi-source products,
 not from structure. Closing it would need backup capacity, a third lever not modelled here.
 
+
+## Two-stage stochastic design (Phase 8)
+
+Code: `src/pharmanet/optimization/stochastic.py`. Math: [formulation.md](formulation.md#two-stage-stochastic-network-design-phase-8). Run with `pharmanet stochastic`.
+
+- **Scenarios.** 30 demand draws (Phase 5 sampler, own random stream) share probability 0.9. Every single plant and candidate-DC outage (12) shares 0.1 (`stochastic.disruption_weight`). Scenario demand is the forecast with **no safety stock**, because the model hedges explicitly.
+- **Solve.** Extensive form: 106,856 variables (8 binary), 97,440 constraints, proven optimal by HiGHS in ~145 s.
+- **Evaluation.** In-sample RP/EEV/VSS and WS/EVPI, then both designs priced on **212 fresh scenarios** from a different random stream.
+
+**Results (base instance, synthetic)**
+
+| | Deterministic | Stochastic |
+|---|---|---|
+| Open DCs | DC01, DC02, DC07, DC08 | DC02, **DC05**, DC07, DC08 |
+| Cost at design demand | $4.19M | $4.36M (+4.1%) |
+| Out-of-sample expected cost | $4.954M | **$4.935M** (VSS 0.39%) |
+| Mean / worst service under single outages | 86.9% / 71.5% | **90.3% / 74.4%** |
+| In-sample VSS / EVPI | | 0.38% / 7.7% |
+
+**Reading it honestly.**
+1. Out-of-sample VSS ≈ in-sample VSS, so the 42-scenario design is not overfit.
+2. **With demand uncertainty only (`disruption_weight = 0`), the stochastic model picks exactly the deterministic design: VSS = 0.** Forecast + safety stock already hedges normal demand variation optimally. All of the VSS comes from outage scenarios.
+3. That value depends on outage probability × the unmet-demand penalty, both assumptions. The stochastic design is a hedge: it pays 4.1% more in a normal year to lose less in an outage year.
+4. EVPI (7.7%) ≫ VSS (0.4%). Knowing *which* node fails would be worth far more than modelling that some might. This is an argument for monitoring and early warning, not just a better design.
+
+## Neo4j export (Phase 8)
+
+Code: `src/pharmanet/graph/neo4j_export.py`. Run with `pharmanet neo4j-export`. It writes `outputs/<run>/neo4j/` with node and relationship CSVs, `import.cypher` (constraints + `LOAD CSV`), `queries.cypher`, a README, and `expected_answers/`.
+
+Graph model: `(:Plant)-[:SHIPS]->(:DC)-[:SHIPS]->(:Region)` with `product_id`, `flow`, `is_cold` on each `SHIPS`; `(:Plant)-[:QUALIFIED_FOR]->(:Product)`; `(:Region)-[:DEMANDS]->(:Product)`.
+
+| Query | Business question | Base answer |
+|---|---|---|
+| `single_plant_cold_regions` | Which regions depend on a single plant for a cold product? | 72 of 80 cold (region, product) pairs, *in current flows* |
+| `single_qualified_products` | Which products have only one approved plant? | SKU01, SKU06 (PL03), SKU08 (PL02, cold), SKU12 (PL04) |
+| `dc_exposure` | How much demand flows through each DC? | DC02 465k units (36.7%) … |
+| `single_dc_regions` | Which regions are served by only one DC? | RG07 (DC08) |
+| `plant_failure_impact` | If plant `$plant` fails, what does each region lose? | proportional flow tracing (matches Phase 6) |
+
+Every query has a pandas twin (`answer_queries`). Tests check the twins against hand-derived answers and, for `plant_failure_impact`, against Phase 6's `exposure_detail`. Load the bundle into Neo4j 5 with `cypher-shell -f import.cypher` (see the bundle README). Against a live database, compare with `expected_answers/`. *Not yet run against a live Neo4j server here.*
+
+**Structural vs operational dependence.** Only 4 products have a single *approved* plant (query 2), but 72 of 80 cold region-product pairs are *currently* supplied by just one plant (query 1). Cost optimization concentrates each product on its cheapest source, so dependence in practice is much higher than dependence on paper. Re-routing is possible (Phase 5), but only within spare capacity.
+
+## Results viewer (Phase 8)
+
+`pharmanet view` opens a Streamlit app (`uv sync --extra viewer`). It reads a finished run's files and computes nothing. It has six tabs: overview (resume numbers + provenance), forecasting (WAPE by model, series explorer), network map (edge width = flow), simulation (cost distribution, worst failures, sensitivity), risk (graph bounds vs simulated loss, mitigations), and stochastic design.
+
+Charts follow the project's data-viz rules:
+- a fixed, colorblind-validated 3-color order with separate light/dark steps;
+- one axis per chart;
+- thin marks and selective labels;
+- a tooltip on every mark and a table view under every chart.
+
+A Streamlit `AppTest` runs the whole app against a real run in CI.

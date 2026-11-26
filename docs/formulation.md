@@ -182,3 +182,54 @@ Tests also check: with `max_open_dcs = 1` the optimum is {D1} = 2900. Single-sou
 | Safety-stock refinement | actual-path lead times raise SS by 4.9% (29.3k → 30.8k units); design unchanged; cost +0.07% |
 
 The strong-link constraint cut the integrality gap by about 30%. A gap remains because the LP can still split a DC's fixed cost across many partially served lanes, and capacity (not just demand) limits each DC.
+
+# Two-stage stochastic network design (Phase 8)
+
+> Implemented in `src/pharmanet/optimization/stochastic.py`. Constraint names in code match those below (indexed by scenario).
+
+**Idea.** The deterministic model (above) picks DCs for one future: forecast + safety stock. The two-stage model picks DCs **here and now** against a set of scenarios $S$, knowing that flows will be **re-optimized after** the scenario is revealed (*recourse*). It is solved as its *extensive form* (deterministic equivalent): a single MILP containing one copy of the flow variables per scenario.
+
+**Additional sets and parameters**
+
+| Symbol | Meaning |
+|---|---|
+| $S$ | scenarios; each has probability $\pi_s$ with $\sum_s \pi_s = 1$ |
+| $dem^s_{rk}$ | demand in scenario $s$ (a Monte Carlo draw around the forecast, no safety stock: uncertainty is modelled explicitly) |
+| $cap^s_{pk},\, cap^s_d,\, cold^s_d$ | capacities in scenario $s$ (equal to the base values except in outage scenarios) |
+
+**Variables.** First stage: $y_d \in \{0,1\}$. Second stage, per scenario: $x^s_{pdk}, z^s_{drk}, u^s_{rk} \ge 0$.
+
+**Objective** (fixed cost + expected recourse cost)
+$$
+\min\; \sum_d f_d\,y_d \;+\; \sum_{s} \pi_s \Big( \sum_{p,d,k} c^{in}_{pdk} x^s_{pdk} + \sum_{d,r,k} c^{out}_{drk} z^s_{drk} + \sum_{r,k} pen_k\, u^s_{rk} \Big)
+$$
+
+**Constraints** (for every $s \in S$; same meaning as C1–C6, with scenario data)
+- `demand[s,r,k]`: $\sum_d z^s_{drk} + u^s_{rk} = dem^s_{rk}$
+- `flow_balance[s,d,k]`: $\sum_p x^s_{pdk} = \sum_r z^s_{drk}$
+- `plant_capacity[s,p,k]`: $\sum_d x^s_{pdk} \le cap^s_{pk}\, q_{pk}$
+- `dc_throughput[s,d]`: $\sum_{r,k} z^s_{drk} \le cap^s_d\, y_d$
+- `dc_cold[s,d]`: $\sum_{r,k\in K^c} z^s_{drk} \le cold^s_d\, y_d$
+- `strong_link[s,d,r,k]`: $z^s_{drk} \le dem^s_{rk}\, y_d$
+
+The **non-anticipativity** rule (the same $y$ in every scenario) is built in, because $y$ has no scenario index.
+
+**Scenarios used**
+- $N$ demand draws (the Phase 5 sampler, with its own random stream), sharing probability $1 - w$.
+- Optionally, every single plant outage and every single *candidate* DC outage at forecast demand, sharing probability $w$ = `stochastic.disruption_weight`.
+
+**Measures reported**
+
+| Name | Definition | Meaning |
+|---|---|---|
+| RP (recourse problem) | optimal objective of the model above | expected cost of the best here-and-now design |
+| EEV | expected cost of the **deterministic** design $\bar y$ on the same scenarios | what ignoring uncertainty costs |
+| **VSS** $=$ EEV $-$ RP $\ge 0$ | value of the stochastic solution | saving from modelling uncertainty |
+| WS (wait-and-see) | $\sum_s \pi_s \cdot$ (optimal cost if scenario $s$ were known in advance) | perfect-foresight benchmark |
+| **EVPI** $=$ RP $-$ WS $\ge 0$ | expected value of perfect information | most that better forecasts could save |
+
+In-sample VSS is optimistic, because the stochastic design was fitted to those scenarios. Both designs are therefore also evaluated **out of sample**, on fresh scenarios from a different random stream.
+
+**Hand-checkable example** (regression instance, used in tests). Scenario A is base demand; scenario B is the same demand with **D1 down**. From the enumeration table, under B: {D1, D2} → everything via D2 = 850 + 1300 + 1300 = 3450; {D2} → 2950 (unaffected).
+With $\pi_B = q$: cost({D1,D2}) $= 2850 + 600q$ and cost({D2}) $= 2950$, so the stochastic optimum switches to {D2} when $q > 1/6$.
+At $q = 0.5$: RP = 2950 ({D2}), EEV = 3150 (deterministic {D1,D2}), **VSS = 200**; WS = 0.5·2850 + 0.5·2950 = 2900, **EVPI = 50**.

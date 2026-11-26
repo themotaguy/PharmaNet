@@ -197,7 +197,7 @@ def make_solver(cfg: SolverConfig) -> Any:
     return solver
 
 
-def _solve(m: pyo.ConcreteModel, cfg: SolverConfig) -> tuple[str, float | None, float]:
+def solve_model(m: pyo.ConcreteModel, cfg: SolverConfig) -> tuple[str, float | None, float]:
     """Solve in place. Returns (termination, best bound, wall seconds)."""
     solver = make_solver(cfg)
     t0 = time.perf_counter()
@@ -216,7 +216,7 @@ def lp_relaxation_bound(inst: NetworkInstance, opts: ModelOptions, cfg: SolverCo
     """Optimal value with integrality dropped (y in [0,1]): a lower bound on the MILP."""
     m = build_model(inst, opts)
     pyo.TransformationFactory("core.relax_integer_vars").apply_to(m)
-    _solve(m, cfg)
+    solve_model(m, cfg)
     return float(pyo.value(m.total_cost))
 
 
@@ -255,7 +255,7 @@ def solve_network_design(
     """
     opts = opts or ModelOptions.from_config(cfg)
     m = build_model(inst, opts)
-    term, bound, wall = _solve(m, cfg.solver)
+    term, bound, wall = solve_model(m, cfg.solver)
     obj = float(pyo.value(m.total_cost))
 
     lp = lp_weak = None

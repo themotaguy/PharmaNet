@@ -24,8 +24,10 @@ from pharmanet.pipeline import (
     run_forecast,
     run_generate,
     run_graph,
+    run_neo4j_export,
     run_optimize,
     run_simulate,
+    run_stochastic,
 )
 from pharmanet.report import write_report
 
@@ -183,6 +185,38 @@ def graph(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None
         typer.echo(f"    dual-qualify {a['product_id']}: {a['sole_plant']} + {a['backup_plant']}")
 
 
+@app.command("neo4j-export")
+def neo4j_export(
+    config: ConfigOpt = Path("configs/base.yaml"),
+    run_id: RunIdOpt = None,
+    plant: Annotated[str | None, typer.Option(help="Plant for the failure-impact query.")] = None,
+) -> None:
+    """Write a Neo4j bundle: CSVs, import.cypher, queries.cypher, expected answers."""
+    cfg = load_config(config)
+    try:
+        answers, out_dir = run_neo4j_export(cfg, run_id, plant)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote Neo4j bundle to {out_dir} (see README.md there)")
+    for name, df in answers.items():
+        typer.echo(f"\n  {name}: {len(df)} rows")
+        typer.echo(df.head(5).round(3).to_string(index=False))
+
+
+@app.command()
+def stochastic(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None) -> None:
+    """Two-stage stochastic design vs the deterministic one (VSS, EVPI, out-of-sample)."""
+    cfg = load_config(config)
+    try:
+        summary, out_dir = run_stochastic(cfg, run_id)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote stochastic outputs to {out_dir}")
+    _echo_nested(summary)
+
+
 @app.command()
 def benchmark(
     config: ConfigOpt = Path("configs/base.yaml"),
@@ -239,6 +273,28 @@ def report(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Wrote {path}" + (f" and {DOCS_RESULTS}" if publish else ""))
+
+
+@app.command()
+def view(
+    output_dir: Annotated[Path, typer.Option(help="Folder containing run directories.")] = Path(
+        "outputs"
+    ),
+) -> None:
+    """Open the Streamlit results viewer (needs the `viewer` extra)."""
+    import importlib.util
+    import os
+    import subprocess
+    import sys
+
+    if importlib.util.find_spec("streamlit") is None:
+        typer.echo("Streamlit is not installed. Run: uv sync --extra viewer", err=True)
+        raise typer.Exit(code=1)
+    app_path = Path(__file__).parent / "viewer" / "app.py"
+    env = {**os.environ, "PHARMANET_OUTPUT_DIR": str(output_dir.resolve())}
+    raise typer.Exit(
+        subprocess.call([sys.executable, "-m", "streamlit", "run", str(app_path)], env=env)
+    )
 
 
 if __name__ == "__main__":

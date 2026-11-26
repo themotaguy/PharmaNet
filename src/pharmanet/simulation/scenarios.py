@@ -34,12 +34,18 @@ from pharmanet.config import SimulationConfig
 from pharmanet.data.generate import MONTHS_PER_YEAR
 from pharmanet.optimization.instance import RK, NetworkInstance
 from pharmanet.optimization.solution import Solution
+from pharmanet.optimization.stochastic import WeightedScenario
 
 SIMULATION_STREAM = 100  # SeedSequence spawn key: independent of the data generator's streams
 
 
-def simulation_rng(seed: int) -> np.random.Generator:
-    return np.random.default_rng(np.random.SeedSequence(seed, spawn_key=(SIMULATION_STREAM,)))
+STOCHASTIC_IN_SAMPLE_STREAM = 200
+STOCHASTIC_OUT_OF_SAMPLE_STREAM = 300
+
+
+def simulation_rng(seed: int, stream: int = SIMULATION_STREAM) -> np.random.Generator:
+    """Independent random stream per purpose (Phase 5 Monte Carlo, SP in/out of sample)."""
+    return np.random.default_rng(np.random.SeedSequence(seed, spawn_key=(stream,)))
 
 
 @dataclass(frozen=True)
@@ -111,4 +117,38 @@ def disruption_scenarios(
         for d, r in out_lanes:
             inst = base.block_outbound(frozenset((d, r, k) for k in cold))
             out.append(Scenario(f"cold_{d}_{r}", "cold_lane_failure", f"{d}->{r}", inst))
+    return out
+
+
+def stochastic_scenarios(
+    base: NetworkInstance,
+    forecast: pd.DataFrame,
+    n_demand: int,
+    disruption_weight: float,
+    common_share: float,
+    outage_capacity_loss: float,
+    rng: np.random.Generator,
+    prefix: str,
+) -> list[WeightedScenario]:
+    """Weighted scenarios for the two-stage model or its evaluation.
+
+    ``n_demand`` demand draws share probability 1 - w. Every single plant outage
+    and every single *candidate* DC outage (at forecast demand) share w, so the
+    model can weigh resilience against cost when choosing which DCs to open.
+    """
+    keys, draws = sample_demand(forecast, n_demand, common_share, rng)
+    outages: list[tuple[str, NetworkInstance]] = []
+    if disruption_weight > 0:
+        outages += [(f"plant_{p}", base.plant_outage(p, outage_capacity_loss)) for p in base.plants]
+        outages += [(f"dc_{d}", base.dc_outage(d)) for d in base.dcs]
+    w = disruption_weight if outages else 0.0
+    out = [
+        WeightedScenario(
+            f"{prefix}_demand_{i:03d}",
+            (1 - w) / n_demand,
+            base.with_demand(dict(zip(keys, row.tolist(), strict=True))),
+        )
+        for i, row in enumerate(draws)
+    ]
+    out += [WeightedScenario(f"{prefix}_{name}", w / len(outages), inst) for name, inst in outages]
     return out

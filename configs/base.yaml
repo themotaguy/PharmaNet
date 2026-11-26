@@ -98,3 +98,10 @@ graph:
 
 report:
   benchmark_seeds: 10               # MILP vs greedy on seeds 1..N in run-all (0 = skip)
+
+stochastic:                        # two-stage stochastic design (Phase 8)
+  enabled: true
+  n_scenarios: 30                  # in-sample demand scenarios (extensive form size scales with this)
+  disruption_weight: 0.1           # probability mass on single plant / candidate-DC outages
+  n_eval_scenarios: 200             # fresh out-of-sample scenarios to compare designs
+  compute_wait_and_see: true       # one MILP per scenario -> WS, EVPI

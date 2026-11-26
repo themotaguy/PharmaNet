@@ -10,6 +10,8 @@ Run directory layout::
         optimize/*.parquet  # Phase 4: MILP + baseline designs and flows, summary.json
         simulate/*.parquet  # Phase 5: Monte Carlo, disruptions, sensitivity, summary.json
         graph/              # Phase 6: node risk, SPOFs, cross-check, mitigations, GraphML
+        stochastic/         # Phase 8: two-stage design, VSS/EVPI, out-of-sample comparison
+        neo4j/              # Phase 8: CSVs, import.cypher, queries.cypher, expected answers
         benchmark/          # MILP vs greedy across generated networks
         manifest.json       # Phase 7: provenance (config hash, git commit, timings)
         results.md          # Phase 7: generated report
@@ -44,6 +46,7 @@ from pharmanet.forecasting.backtest import (
 )
 from pharmanet.forecasting.forecast import final_forecasts
 from pharmanet.graph.build import flow_graph
+from pharmanet.graph.neo4j_export import export_tables, write_neo4j_bundle
 from pharmanet.graph.risk import (
     centrality,
     cross_check,
@@ -65,6 +68,12 @@ from pharmanet.optimization.solution import (
     service_level,
     solution_frames,
 )
+from pharmanet.optimization.stochastic import (
+    evaluate_design_on,
+    expected,
+    solve_stochastic,
+    wait_and_see,
+)
 from pharmanet.optimization.validate import validate_solution
 from pharmanet.report import write_report
 from pharmanet.simulation.evaluate import (
@@ -76,9 +85,12 @@ from pharmanet.simulation.evaluate import (
 )
 from pharmanet.simulation.mitigation import run_mitigations
 from pharmanet.simulation.scenarios import (
+    STOCHASTIC_IN_SAMPLE_STREAM,
+    STOCHASTIC_OUT_OF_SAMPLE_STREAM,
     demand_scenarios,
     disruption_scenarios,
     simulation_rng,
+    stochastic_scenarios,
 )
 
 
@@ -570,6 +582,9 @@ def run_all(
         ("simulate", lambda: run_simulate(cfg, run_id)),
         ("graph", lambda: run_graph(cfg, run_id)),
     ]
+    stages.append(("neo4j", lambda: run_neo4j_export(cfg, run_id)))
+    if cfg.stochastic.enabled:
+        stages.append(("stochastic", lambda: run_stochastic(cfg, run_id)))
     if cfg.report.benchmark_seeds > 0:
         stages.append(("benchmark", lambda: run_benchmark(cfg, cfg.report.benchmark_seeds, run_id)))
     for name, fn in stages:
@@ -592,3 +607,138 @@ def run_all(
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     write_report(out, publish_to)
     return out, manifest
+
+
+# --------------------------------------------------------- Phase 8: stochastic design
+def _design_stats(df: pd.DataFrame, prefix: str) -> dict[str, float]:
+    demand_rows = df[df["scenario"].str.contains("_demand_")]
+    outage_rows = df[~df["scenario"].str.contains("_demand_")]
+    out = {
+        f"{prefix}expected_cost": expected(df, "total_cost"),
+        f"{prefix}p95_cost_demand_scenarios": float(demand_rows["total_cost"].quantile(0.95)),
+        f"{prefix}mean_service_demand_scenarios": float(demand_rows["service_level"].mean()),
+        f"{prefix}prob_shortfall_demand_scenarios": float((demand_rows["unmet"] > 1e-6).mean()),
+    }
+    if len(outage_rows):
+        out[f"{prefix}worst_outage_service"] = float(outage_rows["service_level"].min())
+        out[f"{prefix}mean_outage_service"] = float(outage_rows["service_level"].mean())
+    return out
+
+
+def stochastic_design(
+    cfg: PharmaNetConfig,
+    ds: Dataset,
+    design_demand: pd.DataFrame,
+    deterministic_dcs: frozenset[str],
+) -> tuple[dict[str, Any], dict[str, pd.DataFrame]]:
+    """Two-stage design vs the deterministic one: RP, EEV, VSS, WS, EVPI, out-of-sample.
+
+    ``design_demand`` needs annual_forecast and sigma_monthly. Scenario demand is
+    drawn around the forecast with *no* safety stock: the stochastic model
+    hedges explicitly, while the deterministic design hedges via safety stock.
+    """
+    st, sim, opt = cfg.stochastic, cfg.simulation, cfg.optimization
+    base = build_instance(ds, design_demand.assign(design_demand=design_demand["annual_forecast"]))
+
+    def scenarios(n: int, stream: int, prefix: str) -> list[Any]:
+        return stochastic_scenarios(
+            base, design_demand, n, st.disruption_weight, sim.demand_common_shock_share,
+            sim.outage_capacity_loss, simulation_rng(cfg.run.seed, stream), prefix,
+        )  # fmt: skip
+
+    ins = scenarios(st.n_scenarios, STOCHASTIC_IN_SAMPLE_STREAM, "in")
+    sp = solve_stochastic(ins, opt)
+    eev = evaluate_design_on(ins, deterministic_dcs, opt, sim.n_jobs)
+    rp, eev_v = sp.objective, expected(eev, "total_cost")
+    if eev_v < rp - 1e-4 * abs(rp):
+        raise AssertionError(
+            f"EEV ({eev_v:.2f}) < RP ({rp:.2f}): the SP was not solved to optimality"
+        )
+
+    summary: dict[str, Any] = {
+        "stochastic_open_dcs": sorted(sp.open_dcs),
+        "deterministic_open_dcs": sorted(deterministic_dcs),
+        "same_design": sp.open_dcs == deterministic_dcs,
+        "in_sample": {
+            "n_scenarios": len(ins),
+            "RP": rp,
+            "EEV": eev_v,
+            "VSS": eev_v - rp,
+            "VSS_pct_of_EEV": 100 * (eev_v - rp) / eev_v,
+        },
+        "model": sp.stats,
+    }
+    tables = {"sp_in_sample": sp.scenario_costs, "deterministic_in_sample": eev}
+
+    if st.compute_wait_and_see:
+        ws = wait_and_see(ins, opt, sim.n_jobs)
+        ws_v = expected(ws, "ws_cost")
+        if ws_v > rp + 1e-4 * abs(rp):
+            raise AssertionError(f"WS ({ws_v:.2f}) > RP ({rp:.2f}): inconsistent solves")
+        summary["in_sample"].update({"WS": ws_v, "EVPI": rp - ws_v,
+                                     "EVPI_pct_of_RP": 100 * (rp - ws_v) / rp})  # fmt: skip
+        tables["wait_and_see"] = ws
+
+    oos = scenarios(st.n_eval_scenarios, STOCHASTIC_OUT_OF_SAMPLE_STREAM, "oos")
+    oos_sp = evaluate_design_on(oos, sp.open_dcs, opt, sim.n_jobs)
+    oos_det = evaluate_design_on(oos, deterministic_dcs, opt, sim.n_jobs)
+    s_sp, s_det = _design_stats(oos_sp, ""), _design_stats(oos_det, "")
+    summary["out_of_sample"] = {
+        "n_scenarios": len(oos),
+        "stochastic": s_sp,
+        "deterministic": s_det,
+        "VSS": s_det["expected_cost"] - s_sp["expected_cost"],
+        "VSS_pct": 100 * (s_det["expected_cost"] - s_sp["expected_cost"]) / s_det["expected_cost"],
+    }
+    tables.update({"sp_out_of_sample": oos_sp, "deterministic_out_of_sample": oos_det})
+    # Cost at design demand, for comparison with the deterministic objective.
+    design_inst = build_instance(ds, design_demand)
+    summary["cost_at_design_demand"] = {
+        "stochastic": cost_breakdown(design_inst, evaluate_design(design_inst, sp.open_dcs, opt))[
+            "total"
+        ],
+        "deterministic": cost_breakdown(
+            design_inst, evaluate_design(design_inst, deterministic_dcs, opt)
+        )["total"],
+    }
+    return summary, tables
+
+
+def run_stochastic(cfg: PharmaNetConfig, run_id: str | None = None) -> tuple[dict[str, Any], Path]:
+    out = run_dir(cfg, run_id)
+    odir = out / "optimize"
+    if not (odir / "milp_open_dcs.parquet").exists():
+        raise FileNotFoundError(f"{odir} has no design; run `pharmanet optimize` first")
+    sigma = pd.read_parquet(out / "forecast" / "safety_stock.parquet")[
+        ["region_id", "product_id", "sigma_monthly"]
+    ]
+    dd = pd.read_parquet(odir / "design_demand.parquet").merge(
+        sigma, on=["region_id", "product_id"], validate="one_to_one"
+    )
+    det = frozenset(pd.read_parquet(odir / "milp_open_dcs.parquet")["dc_id"])
+    summary, tables = stochastic_design(cfg, load_dataset(out / "data"), dd, det)
+    sdir = out / "stochastic"
+    sdir.mkdir(parents=True, exist_ok=True)
+    for name, df in tables.items():
+        df.to_parquet(sdir / f"{name}.parquet", index=False)
+    (sdir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
+    return summary, sdir
+
+
+# --------------------------------------------------------------- Phase 8: Neo4j export
+def run_neo4j_export(
+    cfg: PharmaNetConfig, run_id: str | None = None, plant: str | None = None
+) -> tuple[dict[str, pd.DataFrame], Path]:
+    """Export the chosen design (flows at forecast demand) as a Neo4j bundle."""
+    out = run_dir(cfg, run_id)
+    odir = out / "optimize"
+    if not (odir / "milp_open_dcs.parquet").exists():
+        raise FileNotFoundError(f"{odir} has no design; run `pharmanet optimize` first")
+    dd = pd.read_parquet(odir / "design_demand.parquet")
+    open_dcs = frozenset(pd.read_parquet(odir / "milp_open_dcs.parquet")["dc_id"])
+    ds = load_dataset(out / "data")
+    inst = build_instance(ds, dd.assign(design_demand=dd["annual_forecast"]))
+    sol = evaluate_design(inst, open_dcs, cfg.optimization)
+    ndir = out / "neo4j"
+    answers = write_neo4j_bundle(ndir, export_tables(ds, inst, sol), plant)
+    return answers, ndir

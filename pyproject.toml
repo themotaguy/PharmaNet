@@ -18,6 +18,10 @@ dependencies = [
     "networkx>=3.2",
 ]
 
+[project.optional-dependencies]
+# Results viewer (Phase 8). Install with: uv sync --extra viewer
+viewer = ["streamlit>=1.40"]
+
 [project.scripts]
 pharmanet = "pharmanet.cli:app"
 
@@ -30,6 +34,7 @@ dev = [
     "pre-commit>=3.7",
     "pandas-stubs>=2.2",
     "types-PyYAML>=6.0",
+    "streamlit>=1.40",  # so CI can test the viewer; end users opt in via the extra
 ]
 
 [build-system]

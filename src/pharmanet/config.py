@@ -274,6 +274,27 @@ class GraphConfig(_Frozen):
     )
 
 
+# --------------------------------------------------------------------- stochastic
+class StochasticConfig(_Frozen):
+    enabled: bool = True
+    n_scenarios: int = Field(default=30, ge=1, description="In-sample scenarios in the SP.")
+    disruption_weight: float = Field(
+        default=0.1,
+        ge=0,
+        lt=1,
+        description=(
+            "Total probability on single plant / candidate-DC outage scenarios "
+            "(0 = demand uncertainty only)."
+        ),
+    )
+    n_eval_scenarios: int = Field(
+        default=200, ge=1, description="Fresh out-of-sample demand scenarios for evaluation."
+    )
+    compute_wait_and_see: bool = Field(
+        default=True, description="Solve one MILP per in-sample scenario for WS and EVPI."
+    )
+
+
 # ------------------------------------------------------------------------- report
 class ReportConfig(_Frozen):
     benchmark_seeds: int = Field(
@@ -296,6 +317,7 @@ class PharmaNetConfig(_Frozen):
     simulation: SimulationConfig
     graph: GraphConfig = GraphConfig()
     report: ReportConfig = ReportConfig()
+    stochastic: StochasticConfig = StochasticConfig()
 
     @model_validator(mode="after")
     def _cross_section_checks(self) -> Self:
