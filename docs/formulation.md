@@ -78,6 +78,11 @@ $$z_{drk} \leq dem_{rk}\, y_d \qquad \forall d \in D,\; r \in R,\; k \in K$$
 **(C7) `max_open_dcs` *(optional, if `max_open_dcs` is set)*.**
 $$\sum_{d} y_d \leq N^{max}$$
 
+**(C8) `n_minus_1_throughput` and (C9) `n_minus_1_cold`** *(optional resilient design, `n_minus_1_dc: true`; added in Phase 6, off by default)*: after losing any one open DC, the remaining open capacity still covers demand.
+$$\sum_{e} cap_e\, y_e - cap_d\, y_d \;\geq\; \sum_{r,k} dem_{rk} \qquad \forall d \in D$$
+$$\sum_{e} cold_e\, y_e - cold_d\, y_d \;\geq\; \sum_{r}\sum_{k \in K^c} dem_{rk} \qquad \forall d \in D$$
+For a closed DC ($y_d = 0$) the constraint just says total open capacity ≥ demand. For an open one, it subtracts that DC. These are aggregate conditions: since any open DC may serve any region, they guarantee DC *throughput* survives any single DC loss. Plant capacity and qualification can still bind, which is why Phase 6 pairs this with dual qualification. Their cost is the "price of resilience" (Phase 6 results in `methodology.md`).
+
 **Single-sourcing (optional, `single_sourcing: true`)**: each region is served by exactly one DC.
 
 $$

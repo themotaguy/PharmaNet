@@ -80,3 +80,14 @@ def test_simulate_command(
         result = runner.invoke(app, [cmd, "-c", str(small_config_path), "--run-id", "s"])
         assert result.exit_code == 0, result.output
     assert (tmp_path / "outputs/s/simulate/monte_carlo.parquet").exists()
+
+
+def test_graph_command(
+    tmp_path: Path, small_config_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for cmd in ("generate", "forecast", "optimize", "simulate", "graph"):
+        result = runner.invoke(app, [cmd, "-c", str(small_config_path), "--run-id", "g"])
+        assert result.exit_code == 0, result.output
+    assert (tmp_path / "outputs/g/graph/flow_graph.graphml").exists()
+    assert "cross-check" in result.output

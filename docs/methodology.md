@@ -261,4 +261,61 @@ any single-node failure or +10% demand causes shortages. That is the trade-off b
 and resilience. Phase 6 measures it with graph analysis and evaluates mitigations.
 
 ## Graph risk analysis
-_Phase 6._
+
+Code: `src/pharmanet/graph/` (`build.py`, `risk.py`) and `src/pharmanet/simulation/mitigation.py`.
+Run with `pharmanet graph` (needs `simulate` first); outputs go to `outputs/<run_id>/graph/`,
+including `flow_graph.graphml` for Gephi or a Neo4j import.
+
+The graph is built from the design's optimal flows at **forecast** demand, the same basis as the
+Phase 5 disruptions, so the numbers are directly comparable.
+
+### Two graphs, two biases
+| Graph | Edges | Measures | Bias |
+|---|---|---|---|
+| Flow graph | lanes actually used, weighted by flow | **exposure**: demand currently passing through a node | upper bound (no re-routing) |
+| Capability graph (per product) | every lane that *could* carry it: qualified plants → open DCs (cold-capable for cold) → all regions | **structural loss**: demand with *no* path left | lower bound (ignores capacity) |
+
+- **Exposure** uses **proportional flow tracing**: a plant supplying share $s$ of DC $d$'s inflow of $k$ is exposed for $s \cdot z_{drk}$ in every region $r$.
+- **Structural single points of failure** use **dominators**. With a super-source feeding all qualified plants, node $v$ dominates region $r$ for product $k$ if every path from the source to $r$ passes through $v$. We use NetworkX's `immediate_dominators` (Cooper-Harvey-Kennedy) and walk each region's dominator chain.
+- **Betweenness centrality** is reported, but in a 3-layer network it is non-zero only for DCs and ignores volume.
+
+### Cross-check with simulation
+For every full plant or DC outage: **structural ≤ simulated (Phase 5 LP) ≤ exposure**.
+- The lower bound is exact: no path means no flow.
+- The upper bound holds whenever the unmet-demand penalty outweighs re-routing costs. That is true here, but it is not a theorem.
+
+This checks three independently built modules against each other. **Base instance: both bounds hold for all 8 nodes.**
+
+| Node | Structural | **Simulated** | Exposure | Betweenness |
+|---|---|---|---|---|
+| DC02 | 0 | **362k (28.5%)** | 465k | 0.026 |
+| PL03 | 169k | **324k** | 324k | 0 |
+| PL02 | 103k | **272k** | 367k | 0 |
+| DC07 | 0 | **252k** | 355k | 0.041 (highest) |
+
+Readings:
+- PL03's loss equals its exposure: nothing it supplies can be re-routed.
+- DC02 has zero structural loss (other DCs could reach every region) but loses 28.5% through *capacity*. A capacity-blind graph check would call it safe.
+- Betweenness ranks DC07 first, yet DC02 is the worst failure. Connectivity is not criticality when volume matters.
+
+Structural single points of failure found: PL03 → SKU01, SKU06; PL02 → SKU08 (cold); PL04 → SKU12. These are exactly the four single-qualified products.
+
+### Mitigations: the price of resilience
+Each option is costed at design demand and stress-tested against every single plant or DC outage at forecast demand.
+
+| Mitigation | Open DCs | Cost premium | Worst single failure (demand at risk) | Failures with shortfall | Mean demand at risk |
+|---|---|---|---|---|---|
+| Base (cost-optimal) | 4 | — | DC02: **28.5%** | 8 / 8 | 19.6% |
+| N-1 DC design (C8/C9) | 5 (+DC05) | +15.1% | PL03: 25.6% | 4 / 8 | 9.0% |
+| Dual-qualify the 4 single-source products | 4 | −3.3%* | DC02: 28.5% | 8 / 8 | 16.0% |
+| **Both** | 5 | **+12.5%** | PL01: **15.5%** | 4 / 8 | **5.8%** |
+
+\*Network cost only. More sourcing options make flows cheaper, but the one-off cost of tech transfer
+and regulatory approval is **not modelled**. In reality it is substantial.
+
+**Takeaways.** Combining both cuts worst-case demand at risk by 46% (28.5% → 15.5%) and mean demand
+at risk by 70% (19.6% → 5.8%) for a 12.5% network cost premium. Neither alone is enough: N-1 fixes
+DC failures but not single-source plants, and dual qualification fixes single-source plants but not
+DC capacity. The remaining risk (PL01 → 15.5%) comes from *plant capacity* on multi-source products,
+not from structure. Closing it would need backup capacity, a third lever not modelled here.
+

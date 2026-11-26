@@ -210,6 +210,13 @@ class OptimizationConfig(_Frozen):
     )
     single_sourcing: bool = False
     max_open_dcs: int | None = Field(default=None, ge=1)
+    n_minus_1_dc: bool = Field(
+        default=False,
+        description=(
+            "Resilient design (C8/C9): open DC capacity must still cover demand after "
+            "losing any one open DC."
+        ),
+    )
     ss_refinement_iterations: int = Field(
         default=1,
         ge=0,
@@ -255,6 +262,18 @@ class SimulationConfig(_Frozen):
     sensitivity: SensitivityConfig
 
 
+# -------------------------------------------------------------------------- graph
+class GraphConfig(_Frozen):
+    backup_capacity_share: float = Field(
+        default=1.0,
+        gt=0,
+        description=(
+            "Dual-qualification mitigation: capacity given to a single-source product's new "
+            "backup plant, as a share of that product's total design demand."
+        ),
+    )
+
+
 # ------------------------------------------------------------------------- root
 class PharmaNetConfig(_Frozen):
     run: RunConfig
@@ -266,6 +285,7 @@ class PharmaNetConfig(_Frozen):
     inventory: InventoryConfig
     optimization: OptimizationConfig
     simulation: SimulationConfig
+    graph: GraphConfig = GraphConfig()
 
     @model_validator(mode="after")
     def _cross_section_checks(self) -> Self:

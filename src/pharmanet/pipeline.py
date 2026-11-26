@@ -9,15 +9,18 @@ Run directory layout::
         forecast/*.parquet  # Phase 3: backtest, selection, forecasts, safety stock
         optimize/*.parquet  # Phase 4: MILP + baseline designs and flows, summary.json
         simulate/*.parquet  # Phase 5: Monte Carlo, disruptions, sensitivity, summary.json
+        graph/              # Phase 6: node risk, SPOFs, cross-check, mitigations, GraphML
 """
 
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import networkx as nx
 import pandas as pd
 import yaml
 
@@ -32,6 +35,14 @@ from pharmanet.forecasting.backtest import (
     series_metrics,
 )
 from pharmanet.forecasting.forecast import final_forecasts
+from pharmanet.graph.build import flow_graph
+from pharmanet.graph.risk import (
+    centrality,
+    cross_check,
+    exposure_detail,
+    node_risk,
+    structural_spofs,
+)
 from pharmanet.inventory.safety_stock import (
     compute_safety_stock,
     fastest_path_lead_times,
@@ -54,6 +65,7 @@ from pharmanet.simulation.evaluate import (
     summarize_disruptions,
     summarize_monte_carlo,
 )
+from pharmanet.simulation.mitigation import run_mitigations
 from pharmanet.simulation.scenarios import (
     demand_scenarios,
     disruption_scenarios,
@@ -387,3 +399,111 @@ def run_simulate(cfg: PharmaNetConfig, run_id: str | None = None) -> tuple[Simul
     result.sensitivity.to_parquet(sdir / "sensitivity.parquet", index=False)
     (sdir / "summary.json").write_text(json.dumps(result.summary, indent=2, default=str))
     return result, sdir
+
+
+# --------------------------------------------------------------------- Phase 6: graph
+@dataclass(frozen=True)
+class GraphOutputs:
+    flow_graph: nx.DiGraph
+    node_risk: pd.DataFrame
+    exposure: pd.DataFrame
+    spofs: pd.DataFrame
+    centrality: pd.DataFrame
+    cross_check: pd.DataFrame
+    mitigations: pd.DataFrame
+    dual_qualification_actions: list[dict[str, Any]]
+    summary: dict[str, Any]
+
+
+def analyze_graph(
+    cfg: PharmaNetConfig,
+    ds: Dataset,
+    design_demand: pd.DataFrame,
+    open_dcs: frozenset[str],
+    disruptions: pd.DataFrame,
+) -> GraphOutputs:
+    """Phase 6 as a pure function: graph risk, cross-check vs simulation, mitigations.
+
+    The flow graph is built from the design's optimal flows at *forecast*
+    demand, the same basis as the Phase 5 disruption scenarios, so the graph
+    bounds and simulated losses are directly comparable.
+    """
+    opt = cfg.optimization
+    at_forecast = build_instance(
+        ds, design_demand.assign(design_demand=design_demand["annual_forecast"])
+    )
+    base_sol = evaluate_design(at_forecast, open_dcs, opt)
+    g = flow_graph(at_forecast, base_sol)
+    exposure = exposure_detail(at_forecast, base_sol)
+    spofs = structural_spofs(at_forecast, open_dcs)
+    risk = node_risk(at_forecast, base_sol, exposure, spofs)
+    cent = centrality(g)
+    risk = risk.merge(cent[["node", "betweenness", "flow_through"]], on="node", how="left")
+
+    comparable = cfg.simulation.outage_capacity_loss == 1.0
+    check = cross_check(risk, disruptions if comparable else disruptions.iloc[0:0])
+
+    mitig, actions = run_mitigations(
+        build_instance(ds, design_demand), at_forecast, open_dcs, opt, cfg.simulation,
+        cfg.graph.backup_capacity_share,
+    )  # fmt: skip
+
+    def best(df: pd.DataFrame) -> dict[str, Any]:
+        row = df.sort_values(["worst_failure_unmet", "design_cost"]).iloc[0]
+        return {str(k): v for k, v in row.to_dict().items()}
+
+    total = at_forecast.total_demand()
+    top = check.iloc[0]
+    summary: dict[str, Any] = {
+        "graph": {"nodes": g.number_of_nodes(), "edges": g.number_of_edges()},
+        "worst_single_node_failure": {
+            "node": top["node"],
+            "simulated_demand_at_risk_pct": 100 * float(top["simulated_loss"]) / total,
+            "exposure_pct": 100 * float(top["exposure"]) / total,
+            "structural_pct": 100 * float(top["structural_loss"]) / total,
+        },
+        "structural_spofs": {
+            str(n): sorted(set(grp["product_id"]))
+            for n, grp in spofs[spofs["node"] != "UNREACHABLE"].groupby("node")
+        },
+        "unreachable_demand_before_failures": float(
+            spofs.loc[spofs["node"] == "UNREACHABLE", "demand"].sum()
+        ),
+        "cross_check": {
+            "compared_nodes": int(check["simulated_loss"].notna().sum()),
+            "lower_bound_holds": bool(check["lower_bound_ok"].all()),
+            "upper_bound_holds": bool(check["upper_bound_ok"].all()),
+            "comparable": comparable,
+        },
+        "highest_betweenness": cent.sort_values("betweenness", ascending=False)
+        .head(3)[["node", "betweenness"]]
+        .to_dict(orient="records"),
+        "mitigations": mitig.to_dict(orient="records"),
+        "best_mitigation": best(mitig),
+    }
+    if not comparable or math.isnan(float(top["simulated_loss"])):
+        summary["worst_single_node_failure"]["note"] = "simulated losses not comparable"
+    return GraphOutputs(g, risk, exposure, spofs, cent, check, mitig, actions, summary)
+
+
+def run_graph(cfg: PharmaNetConfig, run_id: str | None = None) -> tuple[GraphOutputs, Path]:
+    """Load design + simulation outputs, run Phase 6, write ``<run>/graph/``."""
+    out = run_dir(cfg, run_id)
+    sim = out / "simulate" / "disruptions.parquet"
+    if not sim.exists():
+        raise FileNotFoundError(f"{sim} not found; run `pharmanet simulate` first")
+    odir = out / "optimize"
+    dd = pd.read_parquet(odir / "design_demand.parquet")
+    open_dcs = frozenset(pd.read_parquet(odir / "milp_open_dcs.parquet")["dc_id"])
+    result = analyze_graph(cfg, load_dataset(out / "data"), dd, open_dcs, pd.read_parquet(sim))
+
+    gdir = out / "graph"
+    gdir.mkdir(parents=True, exist_ok=True)
+    nx.write_graphml(result.flow_graph, gdir / "flow_graph.graphml")
+    result.node_risk.to_parquet(gdir / "node_risk.parquet", index=False)
+    result.exposure.to_parquet(gdir / "exposure_detail.parquet", index=False)
+    result.spofs.to_parquet(gdir / "structural_spofs.parquet", index=False)
+    result.cross_check.to_parquet(gdir / "cross_check.parquet", index=False)
+    result.mitigations.to_parquet(gdir / "mitigations.parquet", index=False)
+    (gdir / "summary.json").write_text(json.dumps(result.summary, indent=2, default=str))
+    return result, gdir

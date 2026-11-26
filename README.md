@@ -23,7 +23,7 @@ demand regions, with cold-chain products) and:
 | 3 | Forecasting + safety stock | ✅ |
 | 4 | Optimization (MILP, baseline, validation) | ✅ |
 | 5 | Simulation + sensitivity | ✅ |
-| 6 | Graph risk analysis | ⏳ |
+| 6 | Graph risk analysis | ✅ |
 | 7 | Pipeline, CLI, results | ⏳ |
 | 8 | Optional: Databricks, Neo4j, Streamlit, stochastic | ⏳ |
 
@@ -37,6 +37,7 @@ uv run pharmanet forecast -c configs/base.yaml   # backtest, forecast, safety st
 uv run pharmanet optimize -c configs/base.yaml   # MILP network design + greedy benchmark (~5s)
 uv run pharmanet benchmark -c configs/base.yaml  # MILP vs greedy on 10 generated networks
 uv run pharmanet simulate -c configs/base.yaml   # Monte Carlo, disruptions, sensitivity (~30s)
+uv run pharmanet graph -c configs/base.yaml      # graph risk, SPOFs, cross-check, mitigations (~20s)
 uv run pytest                            # tests
 uv run ruff check . && uv run mypy       # lint + type check
 uv run pre-commit install                # optional: run checks on every commit

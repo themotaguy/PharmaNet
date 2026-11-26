@@ -85,6 +85,15 @@ class NetworkInstance:
         """DC cannot handle any flow (its fixed cost, if opened, is still incurred)."""
         return replace(self, cap_d={**self.cap_d, dc: 0.0}, cold_d={**self.cold_d, dc: 0.0})
 
+    def qualify(self, plant: str, product: str, capacity: float) -> NetworkInstance:
+        """Approve ``plant`` to make ``product`` with the given annual capacity
+        (dual-qualification mitigation; models a completed tech transfer)."""
+        return replace(
+            self,
+            qualified={**self.qualified, (plant, product): 1},
+            cap_pk={**self.cap_pk, (plant, product): self.cap_pk[(plant, product)] + capacity},
+        )
+
     def block_inbound(self, lanes: frozenset[PDK]) -> NetworkInstance:
         return replace(self, blocked_in=self.blocked_in | lanes)
 

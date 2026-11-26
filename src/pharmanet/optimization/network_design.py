@@ -3,6 +3,7 @@
 Constraint names in code = names in the doc:
     demand (C1), flow_balance (C2), plant_capacity (C3), dc_throughput (C4),
     dc_cold (C5), strong_link (C6), max_open_dcs (C7),
+    n_minus_1_throughput (C8), n_minus_1_cold (C9),
     single_source_one_dc (S1), single_source_open (S2), single_source_link (S3).
 
 The solver is chosen by config (HiGHS by default). Gurobi/CBC are wired up
@@ -40,6 +41,7 @@ class ModelOptions:
     strong_linking: bool = True
     single_sourcing: bool = False
     max_open_dcs: int | None = None
+    n_minus_1_dc: bool = False
     # Fix y_d to given 0/1 values. Used to evaluate a fixed design (Phase 5),
     # the "greedy DCs + optimal flows" benchmark, and property tests.
     fixed_open: Mapping[str, int] | None = None
@@ -50,6 +52,7 @@ class ModelOptions:
             strong_linking=cfg.strong_linking,
             single_sourcing=cfg.single_sourcing,
             max_open_dcs=cfg.max_open_dcs,
+            n_minus_1_dc=cfg.n_minus_1_dc,
         )
 
 
@@ -133,6 +136,24 @@ def build_model(inst: NetworkInstance, opts: ModelOptions) -> pyo.ConcreteModel:
     if opts.max_open_dcs is not None:
         # (C7) max_open_dcs
         m.max_open_dcs = pyo.Constraint(expr=sum(m.y[d] for d in m.D) <= opts.max_open_dcs)
+
+    if opts.n_minus_1_dc:
+        total = sum(inst.dem.values())
+        cold_total = sum(v for (_, k), v in inst.dem.items() if k in inst.cold_products)
+        # (C8) after losing any one open DC, remaining throughput still covers demand
+        m.n_minus_1_throughput = pyo.Constraint(
+            m.D,
+            rule=lambda m, d: (
+                sum(inst.cap_d[e] * m.y[e] for e in m.D) - inst.cap_d[d] * m.y[d] >= total
+            ),
+        )
+        # (C9) same for cold capacity and cold demand
+        m.n_minus_1_cold = pyo.Constraint(
+            m.D,
+            rule=lambda m, d: (
+                sum(inst.cold_d[e] * m.y[e] for e in m.D) - inst.cold_d[d] * m.y[d] >= cold_total
+            ),
+        )
 
     if opts.fixed_open is not None:
         for d, v in opts.fixed_open.items():

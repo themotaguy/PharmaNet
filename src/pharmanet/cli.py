@@ -22,6 +22,7 @@ from pharmanet.pipeline import (
     run_dir,
     run_forecast,
     run_generate,
+    run_graph,
     run_optimize,
     run_simulate,
 )
@@ -153,6 +154,31 @@ def simulate(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = N
         "base_design_service_level",
     ]
     typer.echo(result.sensitivity[cols].round(3).to_string(index=False))
+
+
+@app.command()
+def graph(config: ConfigOpt = Path("configs/base.yaml"), run_id: RunIdOpt = None) -> None:
+    """Graph risk: exposure, single points of failure, cross-check, mitigations."""
+    cfg = load_config(config)
+    try:
+        result, out_dir = run_graph(cfg, run_id)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote graph outputs to {out_dir}")
+    s = result.summary
+    typer.echo(f"  structural single points of failure: {s['structural_spofs']}")
+    typer.echo(f"  cross-check: {s['cross_check']}")
+    typer.echo("  node risk (units; structural <= simulated <= exposure):")
+    cols = ["node", "kind", "structural_loss", "simulated_loss", "exposure", "betweenness"]
+    typer.echo(result.cross_check[cols].round(3).to_string(index=False))
+    typer.echo("  mitigations:")
+    mcols = ["mitigation", "open_dcs", "cost_premium_pct", "worst_failure",
+             "worst_failure_demand_at_risk_pct", "failures_with_shortfall",
+             "worst_failure_reduction_pct"]  # fmt: skip
+    typer.echo(result.mitigations[mcols].round(2).to_string(index=False))
+    for a in result.dual_qualification_actions:
+        typer.echo(f"    dual-qualify {a['product_id']}: {a['sole_plant']} + {a['backup_plant']}")
 
 
 @app.command()
