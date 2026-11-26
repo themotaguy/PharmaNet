@@ -8,9 +8,9 @@
 |---|---|
 | Config | `configs/base.yaml` (sha256 `76521ae513e9`) |
 | Seed | 42 |
-| Code | pharmanet 0.1.0, git `747353a-dirty` |
-| Finished | 2026-11-26T03:01:52+00:00 |
-| Stage timings (s) | generate 0.1, forecast 84.2, optimize 2.9, simulate 39.4, graph 19.1, benchmark 13.9 |
+| Code | pharmanet 0.1.0, git `5e82ef2` |
+| Finished | 2026-11-26T03:06:24+00:00 |
+| Stage timings (s) | generate 0.1, forecast 73.8, optimize 2.8, simulate 36.8, graph 18.5, benchmark 14.5 |
 
 ## Instance
 
@@ -30,7 +30,7 @@
 ## 2. Safety stock
 
 Service level 95%: safety stock 29k units = 2.31% of annual forecast (1,268k units).
-Recomputed with the chosen network's lead times: 29k → 31k units; design changed: False.
+Recomputed with the chosen network's lead times: 29k → 31k units; design changed: no.
 
 ## 3. Network design (MILP)
 
@@ -40,7 +40,7 @@ Recomputed with the chosen network's lead times: 29k → 31k units; design chang
 | Solve | optimal, 1.07 s, MIP gap 0.013% |
 | LP bound / integrality gap | $4.01M / 4.20% (without C6: 6.01%) |
 | Open DCs | DC01, DC02, DC07, DC08 |
-| Annual cost | $4.19M = fixed $2.07M + inbound $852,699 + outbound $1.27M + penalty $0 |
+| Annual cost | $4.19M = fixed $2.07M + inbound $853k + outbound $1.27M + penalty $0 |
 | Service level (design demand) | 100.00% |
 
 ## 4. MILP vs greedy baseline
@@ -58,7 +58,7 @@ Across 10 generated networks (seeds 1–10): mean **16.6%**, median 16.4%, range
 | Service level mean / p5 / worst | 100.00% / 100.00% / 99.17% |
 | P(any shortfall) | 0.2% |
 | Open-capacity headroom over forecast | 8.2% |
-| Single failures causing shortfall | 9 of 38 |
+| Single failures causing shortfall (plants, DCs, cold lanes) | 9 of 38 |
 
 Worst single failures:
 
@@ -93,6 +93,8 @@ Cross-check structural ≤ simulated ≤ exposure on 8 nodes: lower bound holds,
 | n_minus_1 | 5 | +15.1% | PL03 (25.6%) | 9.0% |
 | dual_qualification | 4 | -3.3% | DC02 (28.5%) | 16.0% |
 | n_minus_1+dual_qualification | 5 | +12.5% | PL01 (15.5%) | 5.8% |
+
+Cost premium is network cost at design demand. Dual qualification's one-off cost (tech transfer, regulatory approval) is not modelled, so its premium is understated. "At risk" is unmet demand as a share of forecast demand, over every single plant and DC outage.
 
 ## Resume numbers
 
